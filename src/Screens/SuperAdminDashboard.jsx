@@ -22,15 +22,15 @@ function DashboardShell() {
 
   useEffect(() => {
     if (loading) return;
-    const moduleName = TAB_TO_MODULE[activeTab];
     const currentMod = MODULES.find(m => m.id === activeTab);
-    if (currentMod?.alwaysVisible) return;
-    if (moduleName && !isVisible(moduleName)) setActiveTab(firstAllowedTab);
+    if (!currentMod) return;
+    if (currentMod.alwaysVisible) return;
+    if (!isVisible(currentMod.module_name)) setActiveTab(firstAllowedTab);
   }, [activeTab, isVisible, loading, firstAllowedTab]);
 
   const renderContent = () => {
-    const moduleName = TAB_TO_MODULE[activeTab];
     const currentMod = MODULES.find(m => m.id === activeTab);
+    const moduleName = currentMod?.module_name;
 
     if (moduleName && !currentMod?.alwaysVisible && !can(moduleName, 'view')) {
       return (
@@ -41,8 +41,7 @@ function DashboardShell() {
             </div>
             <h2 className="text-3xl font-black text-slate-900">Access Denied</h2>
             <p className="text-slate-500 mt-2 font-medium">
-              You don't have permission to view <strong>{moduleName}</strong>.
-              Ask your administrator to enable read access for your role.
+              You don't have permission to view this module.
             </p>
           </div>
         </div>

@@ -65,30 +65,40 @@ async function syncTeacherSubjects(conn, userId, role, subjectIds) {
 // =====================================================================
 // === 1. AUTHENTICATION (accepts email OR username) ===================
 // =====================================================================
+// --- Replace your existing /api/login block with this one ---
 app.post('/api/login', async (req, res) => {
     const identifier = req.body.identifier || req.body.email;
     const { password } = req.body;
     try {
         const [rows] = await db.execute(
-            'SELECT * FROM users WHERE (email = ? OR username = ?) AND password = ?',
+            // ADDED profile_pic to the SELECT statement below
+            'SELECT id, name, email, username, role, institutionId, status, profile_pic FROM users WHERE (email = ? OR username = ?) AND password = ?',
             [identifier, identifier, password]
         );
         if (rows.length === 0) return res.status(401).json({ success: false, message: 'Invalid credentials' });
         const user = rows[0];
-        if (user.status === 'inactive') return res.status(403).json({ success: false, message: 'Your account has been deactivated. Contact your administrator.' });
+        if (user.status === 'inactive') return res.status(403).json({ success: false, message: 'Your account has been deactivated.' });
 
         if (user.role !== 'Developer' && user.institutionId) {
             const [instRows] = await db.execute('SELECT usage_plan, plan_start_date FROM institutions WHERE id = ?', [user.institutionId]);
             if (instRows.length > 0) {
                 const status = computePlanStatus(instRows[0].usage_plan, instRows[0].plan_start_date);
-                if (status.expired) return res.status(403).json({ success: false, message: "Your institution's plan has expired. Please contact SmartEdz to renew." });
+                if (status.expired) return res.status(403).json({ success: false, message: "Your institution's plan has expired." });
             }
         }
 
         const token = jwt.sign({ id: user.id, role: user.role, instId: user.institutionId }, JWT_SECRET, { expiresIn: '24h' });
         res.json({
             success: true, token,
-            user: { id: user.id, name: user.name, email: user.email, username: user.username, role: user.role, institutionId: user.institutionId }
+            user: { 
+                id: user.id, 
+                name: user.name, 
+                email: user.email, 
+                username: user.username, 
+                role: user.role, 
+                institutionId: user.institutionId,
+                profile_pic: user.profile_pic // ADDED: Now sidebar gets pic on login
+            }
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

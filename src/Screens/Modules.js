@@ -44,19 +44,13 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/668/668278.png',
     navigateTo: '/AcademicCalendar'
   },
-  {
-    // Profile is reachable via the sidebar avatar tile, not the main menu.
-    // alwaysVisible: true → no permission check (every user can view their own).
-    // hideFromSidebar: true → the main sidebar navigation skips this entry.
-    id: 'profile',
-    module_name: 'Profile',
-    label: 'Profile',
-    title: 'Profile',
-    imageSource: 'https://cdn-icons-png.flaticon.com/128/1077/1077063.png',
-    navigateTo: '/Profile',
-    alwaysVisible: true,
-    hideFromSidebar: true
-  }
+  { 
+    id: 'profile',   
+    module_name: 'Profile',       
+    label: 'Profile',       
+    alwaysVisible: true,     // Everyone can access
+    hideFromSidebar: true    // Hidden from the main list
+  },
 ];
 
 export const MODULE_NAMES = MODULES.map(m => m.module_name);
