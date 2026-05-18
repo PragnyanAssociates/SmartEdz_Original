@@ -64,8 +64,9 @@ function DashboardShell() {
         return <ManageLogin />;
         case 'Timetable':
         return <Timetable />;
-         case 'AcademicCalendar':
+        case 'AcademicCalendar':
         return <AcademicCalendar />;
+         
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

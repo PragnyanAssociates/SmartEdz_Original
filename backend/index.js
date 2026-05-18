@@ -28,7 +28,7 @@ const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
     'Timetable',
-    'AcademicCalendar'
+    'AcademicCalendar',
 ];
 
 // =====================================================================
