@@ -16,7 +16,8 @@ const db = mysql.createPool({
     uri: process.env.DATABASE_URL,
     waitForConnections: true,
     connectionLimit: 10,
-    enableKeepAlive: true
+    enableKeepAlive: true,
+    dateStrings: true // CRITICAL: This prevents the 1-day-off timezone bug
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
@@ -689,8 +690,6 @@ app.delete('/api/admin/subjects/:id', async (req, res) => {
 // =====================================================================
 // === 13. ACADEMIC CALENDAR ===========================================
 // =====================================================================
-
-// Get all events for an institution
 app.get('/api/admin/calendar/:instId', async (req, res) => {
     try {
         const [rows] = await db.execute(
@@ -701,31 +700,28 @@ app.get('/api/admin/calendar/:instId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Create event - Uses DATE(?) to ensure timezone neutrality in SQL
 app.post('/api/admin/calendar', async (req, res) => {
     const { institutionId, name, event_date, time, description, type, adminId } = req.body;
     try {
         await db.execute(
-            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, DATE(?), ?, ?, ?, ?)',
+            'INSERT INTO calendar_events (institutionId, name, event_date, time, description, type, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
             [institutionId, name, event_date, time || null, description || null, type, adminId]
         );
         res.json({ success: true, message: 'Event created successfully' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Update event - Uses DATE(?) to ensure timezone neutrality in SQL
 app.put('/api/admin/calendar/:id', async (req, res) => {
     const { name, event_date, time, description, type } = req.body;
     try {
         await db.execute(
-            'UPDATE calendar_events SET name=?, event_date=DATE(?), time=?, description=?, type=? WHERE id=?',
+            'UPDATE calendar_events SET name=?, event_date=?, time=?, description=?, type=? WHERE id=?',
             [name, event_date, time || null, description || null, type, req.params.id]
         );
         res.json({ success: true, message: 'Event updated successfully' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Delete event
 app.delete('/api/admin/calendar/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM calendar_events WHERE id = ?', [req.params.id]);

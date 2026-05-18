@@ -30,14 +30,6 @@ export default function AcademicCalendar() {
     const [editingEvent, setEditingEvent] = useState(null);
     const [form, setForm] = useState({ name: '', time: '', description: '', type: 'Meeting' });
 
-    // HELPER: Prevents timezone shifts by treating date as local string
-    const getSafeDate = (dateInput) => {
-        if (!dateInput) return new Date();
-        const datePart = typeof dateInput === 'string' ? dateInput.split('T')[0] : dateInput.toISOString().split('T')[0];
-        const [year, month, day] = datePart.split('-');
-        return new Date(year, month - 1, day);
-    };
-
     const fetchEvents = async () => {
         try {
             const res = await fetch(`${API_BASE_URL}/admin/calendar/${user.institutionId}`);
@@ -104,11 +96,17 @@ export default function AcademicCalendar() {
         setIsModalOpen(true);
     };
 
-    // Filter events for sidebar list using safe date parsing
+    // Standardized Parsing for display
+    const parseDBDate = (dateStr) => {
+        const clean = dateStr.split('T')[0];
+        const [y, m, d] = clean.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    };
+
     const monthEvents = events.filter(e => {
-        const d = getSafeDate(e.event_date);
+        const d = parseDBDate(e.event_date);
         return d.getMonth() === month && d.getFullYear() === year;
-    }).sort((a,b) => new Date(a.event_date) - new Date(b.event_date));
+    }).sort((a,b) => a.event_date.localeCompare(b.event_date));
 
     if (loading) return <div className="p-10 text-center font-bold text-slate-400">Loading Calendar...</div>;
 
@@ -128,12 +126,12 @@ export default function AcademicCalendar() {
                         </div>
                         <div className="divide-y divide-slate-50 max-h-[500px] overflow-y-auto">
                             {monthEvents.length > 0 ? monthEvents.map(e => {
-                                const safeDate = getSafeDate(e.event_date);
+                                const dt = parseDBDate(e.event_date);
                                 return (
                                     <div key={e.id} className="p-4 flex gap-3 group">
                                         <div className="text-center shrink-0 w-10">
-                                            <div className="text-[10px] font-black text-slate-400 uppercase">{dayNames[safeDate.getDay()]}</div>
-                                            <div className="text-lg font-black text-slate-700">{safeDate.getDate()}</div>
+                                            <div className="text-[10px] font-black text-slate-400 uppercase">{dayNames[dt.getDay()]}</div>
+                                            <div className="text-lg font-black text-slate-700">{dt.getDate()}</div>
                                         </div>
                                         <div className="flex-1 border-l-4 rounded-r pl-3" style={{ borderColor: eventTypesConfig[e.type].color }}>
                                             <p className="text-sm font-bold text-slate-800 leading-tight">{e.name}</p>
@@ -180,13 +178,14 @@ export default function AcademicCalendar() {
                             if (!day) return <div key={`empty-${idx}`} className="bg-slate-50/30 border-r border-b border-slate-100 h-32" />;
                             
                             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            // Direct string comparison - no timezone mess
                             const dayEvents = events.filter(e => e.event_date.split('T')[0] === dateStr);
                             const isToday = new Date().toDateString() === new Date(year, month, day).toDateString();
 
                             return (
                                 <div key={idx} 
                                     onClick={() => openAdd(day)}
-                                    className={`relative h-32 border-r border-b border-slate-100 p-2 transition-all ${isAdmin ? 'cursor-pointer hover:bg-blue-50/30' : ''}`}>
+                                    className={`relative h-32 border-r border-b border-slate-100 p-2 transition-all group ${isAdmin ? 'cursor-pointer hover:bg-blue-50/30' : ''}`}>
                                     <span className={`inline-flex items-center justify-center w-7 h-7 text-xs font-black rounded-full ${isToday ? 'bg-blue-600 text-white shadow-lg shadow-blue-200' : 'text-slate-700'}`}>
                                         {day}
                                     </span>
