@@ -52,7 +52,7 @@ export default function DashboardHeader() {
         {/* SECTION 2: School Official Info (Center) */}
         <div className="col-span-6 flex flex-col items-center justify-center text-center">
           <h1 className="text-4xl font-black text-[#1e3a5f] uppercase tracking-tighter mb-2">
-            {inst?.name || "VPSNGO"}
+            {inst?.name || "VIVEKANANDA PUBLIC SCHOOL"}
           </h1>
           
           <div className="flex items-center justify-center gap-8 text-slate-600 font-bold text-sm">
@@ -69,7 +69,8 @@ export default function DashboardHeader() {
 
         {/* SECTION 3: Branding (Right) */}
         <div className="col-span-3 flex justify-end items-center">
-          <div className="flex items-center gap-3 bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100">
+          {/* Background and border classes removed to match the second image */}
+          <div className="flex items-center gap-3">
             <img src={smartedzLogo} alt="SmartEdz" className="h-12 w-auto object-contain" />
             <div className="flex flex-col leading-none">
               <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Powered By</p>

@@ -3,6 +3,7 @@ import Sidebar from './Sidebar';
 import DashboardHeader from './DashboardHeader';
 import Overview from './Overview';
 import ManageLogin from './ManageLogin';
+import Timetable from '../components/Timetable/Timetable';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
@@ -60,6 +61,8 @@ function DashboardShell() {
         return <Overview />;
       case 'manage-login':
         return <ManageLogin />;
+        case 'Timetable':
+        return <Timetable />;
       default:
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

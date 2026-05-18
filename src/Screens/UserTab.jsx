@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit, Trash2, X, Search, UserCircle2 } from 'lucide-react';
+import { Plus, Edit, Trash2, X, Search, UserCircle2, BookOpen } from 'lucide-react';
 import { API_BASE_URL } from '../apiConfig';
 
 export default function UserTab({ data, fetchData, user }) {
@@ -11,11 +11,12 @@ export default function UserTab({ data, fetchData, user }) {
   const emptyForm = {
     name: '', email: '', password: '', role: '',
     phone_no: '', roll_no: '', admission_no: '',
-    class_id: '', section: '', status: 'active'
+    class_id: '', section: '', status: 'active',
+    subject_ids: []   // NEW — array of subject IDs (only used when role is a Teacher role)
   };
   const [form, setForm] = useState(emptyForm);
 
-  // Build the role-tab list: every defined role plus any role found on a user.
+  // Build the role-tab list
   const roleTabs = useMemo(() => {
     const counts = {};
     data.users.forEach(u => { counts[u.role] = (counts[u.role] || 0) + 1; });
@@ -44,11 +45,14 @@ export default function UserTab({ data, fetchData, user }) {
 
   const openEdit = (u) => {
     setEditingUser(u);
+    // Pull this teacher's saved subject IDs from data.teacherSubjects
+    const subject_ids = (data.teacherSubjects && data.teacherSubjects[u.id]) || [];
     setForm({
       name: u.name || '', email: u.email || '', password: u.password || '',
       role: u.role || '', phone_no: u.phone_no || '', roll_no: u.roll_no || '',
       admission_no: u.admission_no || '', class_id: u.class_id || '',
-      section: u.section || '', status: u.status || 'active'
+      section: u.section || '', status: u.status || 'active',
+      subject_ids: subject_ids.map(String)
     });
     setIsModalOpen(true);
   };
@@ -65,10 +69,15 @@ export default function UserTab({ data, fetchData, user }) {
     const url = editingUser
       ? `${API_BASE_URL}/admin/users/${editingUser.id}`
       : `${API_BASE_URL}/admin/users`;
+    const payload = {
+      ...form,
+      institutionId: user.institutionId,
+      subject_ids: isTeacherRole ? form.subject_ids : []   // only send subjects for teachers
+    };
     const res = await fetch(url, {
       method: editingUser ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, institutionId: user.institutionId })
+      body: JSON.stringify(payload)
     });
     if (res.ok) {
       setIsModalOpen(false);
@@ -79,7 +88,30 @@ export default function UserTab({ data, fetchData, user }) {
     }
   };
 
+  // Role-based extra fields. A "Teacher" role gets a subject picker;
+  // a "Student" role gets class/section/roll/admission fields.
+  const isTeacherRole = form.role && form.role.toLowerCase().includes('teacher');
   const isStudentRole = form.role && form.role.toLowerCase().includes('student');
+
+  const toggleSubject = (subjectId) => {
+    const id = String(subjectId);
+    setForm(prev => ({
+      ...prev,
+      subject_ids: prev.subject_ids.includes(id)
+        ? prev.subject_ids.filter(x => x !== id)
+        : [...prev.subject_ids, id]
+    }));
+  };
+
+  // Display the subject names a teacher currently teaches, in the row.
+  const teacherSubjectNames = (uid) => {
+    const ids = (data.teacherSubjects && data.teacherSubjects[uid]) || [];
+    if (ids.length === 0) return '';
+    const names = ids
+      .map(sid => data.subjects?.find(s => s.id === sid)?.name)
+      .filter(Boolean);
+    return names.join(', ');
+  };
 
   return (
     <div className="space-y-6">
@@ -134,7 +166,7 @@ export default function UserTab({ data, fetchData, user }) {
             <tr>
               <th className="p-5">Name & Contact</th>
               <th className="p-5">Role</th>
-              <th className="p-5">Class / Section</th>
+              <th className="p-5">Class / Subjects</th>
               <th className="p-5">Status</th>
               <th className="p-5 text-right">Actions</th>
             </tr>
@@ -142,6 +174,8 @@ export default function UserTab({ data, fetchData, user }) {
           <tbody className="divide-y divide-slate-50">
             {filteredUsers.length > 0 ? filteredUsers.map(u => {
               const cls = data.classes.find(c => c.id === u.class_id);
+              const isTeacher = (u.role || '').toLowerCase().includes('teacher');
+              const isStudent = (u.role || '').toLowerCase().includes('student');
               return (
                 <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="p-5">
@@ -161,7 +195,11 @@ export default function UserTab({ data, fetchData, user }) {
                     }`}>{u.role}</span>
                   </td>
                   <td className="p-5 text-sm font-medium text-slate-500">
-                    {cls ? `${cls.className}${u.section ? ` - ${u.section}` : ''}` : '—'}
+                    {isStudent && cls
+                      ? `${cls.className}${u.section ? ` - ${u.section}` : ''}`
+                      : isTeacher
+                        ? (teacherSubjectNames(u.id) || <span className="italic text-slate-300">No subjects</span>)
+                        : '—'}
                   </td>
                   <td className="p-5">
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
@@ -240,6 +278,48 @@ export default function UserTab({ data, fetchData, user }) {
                 </select>
               </div>
 
+              {/* ========= TEACHER-ONLY: subject picker ========= */}
+              {isTeacherRole && (
+                <div className="col-span-2 flex flex-col gap-3 bg-blue-50/40 border border-blue-100 rounded-2xl p-5">
+                  <div className="flex items-center gap-2">
+                    <BookOpen size={16} className="text-blue-600" />
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Subjects this teacher will teach
+                    </label>
+                    <span className="ml-auto text-[11px] font-bold text-blue-600 bg-white px-2.5 py-0.5 rounded-full">
+                      {form.subject_ids.length} selected
+                    </span>
+                  </div>
+
+                  {(data.subjects || []).length === 0 ? (
+                    <p className="text-xs text-slate-500 italic">
+                      No subjects created yet. Open <strong>Timetable → Subjects</strong> to add Math, English, etc., then come back.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {data.subjects.map(s => {
+                        const id = String(s.id);
+                        const selected = form.subject_ids.includes(id);
+                        return (
+                          <button
+                            type="button"
+                            key={s.id}
+                            onClick={() => toggleSubject(s.id)}
+                            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                              selected
+                                ? 'bg-blue-600 text-white shadow shadow-blue-200'
+                                : 'bg-white border border-slate-200 text-slate-600 hover:border-blue-300'
+                            }`}>
+                            {s.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ========= STUDENT-ONLY fields ========= */}
               {isStudentRole && (
                 <>
                   <div className="flex flex-col gap-2">
