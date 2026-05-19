@@ -52,6 +52,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/17163/17163937.png',
     navigateTo: '/Attendance'
   },
+  {
+    id: 'Exams',
+    module_name: 'Exams',
+    label: 'Exams',
+    title: 'Exams',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/3273/3273259.png',
+    navigateTo: '/Exams'
+  },
   { 
     id: 'profile',   
     module_name: 'Profile',       

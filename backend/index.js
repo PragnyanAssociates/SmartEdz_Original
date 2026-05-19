@@ -30,7 +30,8 @@ const DEFAULT_MODULES = [
     'Manage Logins',
     'Timetable',
     'Academic Calendar',
-    'Attendance'
+    'Attendance',
+    'Exams'
 ];
 
 // =====================================================================
@@ -972,6 +973,530 @@ app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => 
 });
 
 
+
+// =====================================================================
+// === 16. EXAMS & EXAM SCHEDULES =======================================
+//
+//   Two related features:
+//     • exam_schedules: printable exam timetables (date/subject/time/room)
+//     • online_exams:   actual assessments students attempt in-browser
+// =====================================================================
+
+// Helper — does a JSON column have content? schedule_data comes back as
+// a string or already-parsed array depending on MySQL version/driver.
+const parseJsonSafe = (val, fallback = []) => {
+    if (val === null || val === undefined) return fallback;
+    if (Array.isArray(val) || typeof val === 'object') return val;
+    try { return JSON.parse(val); } catch { return fallback; }
+};
+
+const nowSQL = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+
+// =====================================================================
+// === 16.A EXAM SCHEDULES =============================================
+// =====================================================================
+
+// --- 16.A.1 List all schedules for a school -----------------------
+//   GET /api/admin/exam-schedules/:instId
+app.get('/api/admin/exam-schedules/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT s.*, c.className, u.name AS created_by_name
+               FROM exam_schedules s
+               LEFT JOIN classes c ON c.id = s.class_id
+               LEFT JOIN users u ON u.id = s.created_by
+              WHERE s.institutionId = ?
+              ORDER BY s.created_at DESC`,
+            [req.params.instId]
+        );
+        const decorated = rows.map(r => ({
+            ...r,
+            schedule_data: parseJsonSafe(r.schedule_data, [])
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.A.2 List schedules visible to a student -------------------
+//   GET /api/admin/exam-schedules/student/:studentId
+//   Returns schedules where (class_id = student.class_id OR class_id IS NULL)
+//   AND (section = student.section OR section IS NULL).
+app.get('/api/admin/exam-schedules/student/:studentId', async (req, res) => {
+    try {
+        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [req.params.studentId]);
+        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        const { institutionId, class_id, section } = u[0];
+
+        const [rows] = await db.execute(
+            `SELECT s.*, c.className, usr.name AS created_by_name
+               FROM exam_schedules s
+               LEFT JOIN classes c   ON c.id = s.class_id
+               LEFT JOIN users usr   ON usr.id = s.created_by
+              WHERE s.institutionId = ?
+                AND (s.class_id IS NULL OR s.class_id = ?)
+                AND (s.section  IS NULL OR s.section = ?)
+              ORDER BY s.created_at DESC`,
+            [institutionId, class_id || 0, section || '']
+        );
+        const decorated = rows.map(r => ({
+            ...r,
+            schedule_data: parseJsonSafe(r.schedule_data, [])
+        }));
+        res.json(decorated);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.A.3 Get single schedule -----------------------------------
+app.get('/api/admin/exam-schedules/single/:id', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT s.*, c.className, u.name AS created_by_name
+               FROM exam_schedules s
+               LEFT JOIN classes c ON c.id = s.class_id
+               LEFT JOIN users u ON u.id = s.created_by
+              WHERE s.id = ?`,
+            [req.params.id]
+        );
+        if (rows.length === 0) return res.status(404).json({ error: 'Schedule not found' });
+        const r = rows[0];
+        res.json({ ...r, schedule_data: parseJsonSafe(r.schedule_data, []) });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.A.4 Create schedule ---------------------------------------
+//   class_id = null means "All classes"
+//   section  = null means "all sections in the class"
+app.post('/api/admin/exam-schedules', async (req, res) => {
+    const {
+        institutionId, title, subtitle, exam_type,
+        class_id, section, schedule_data, created_by
+    } = req.body;
+    if (!institutionId || !title) return res.status(400).json({ error: 'institutionId and title required.' });
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO exam_schedules
+               (institutionId, title, subtitle, exam_type, class_id, section, schedule_data, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, subtitle || null, exam_type || 'Internal',
+             class_id || null, section || null, JSON.stringify(schedule_data || []), created_by || null]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.A.5 Update schedule ---------------------------------------
+app.put('/api/admin/exam-schedules/:id', async (req, res) => {
+    const { title, subtitle, exam_type, class_id, section, schedule_data } = req.body;
+    try {
+        await db.execute(
+            `UPDATE exam_schedules
+                SET title = ?, subtitle = ?, exam_type = ?, class_id = ?, section = ?, schedule_data = ?
+              WHERE id = ?`,
+            [title, subtitle || null, exam_type || 'Internal',
+             class_id || null, section || null, JSON.stringify(schedule_data || []), req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.A.6 Delete schedule ---------------------------------------
+app.delete('/api/admin/exam-schedules/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM exam_schedules WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+// === 16.B ONLINE EXAMS ===============================================
+// =====================================================================
+
+// --- 16.B.1 List exams created by/visible to a teacher ------------
+//   GET /api/admin/exams/teacher/:teacherId?instId=...
+//   Super Admin gets ALL exams in the school; teachers get only their own.
+app.get('/api/admin/exams/teacher/:teacherId', async (req, res) => {
+    const { teacherId } = req.params;
+    try {
+        const [users] = await db.execute('SELECT id, role, institutionId FROM users WHERE id = ?', [teacherId]);
+        if (users.length === 0) return res.status(404).json({ error: 'User not found' });
+        const me = users[0];
+        const isAdmin = me.role === 'Super Admin' || me.role === 'Developer';
+
+        let sql, params;
+        if (isAdmin) {
+            sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
+                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
+                     FROM online_exams e
+                     LEFT JOIN classes c   ON c.id = e.class_id
+                     LEFT JOIN subjects sub ON sub.id = e.subject_id
+                     LEFT JOIN users u     ON u.id = e.created_by
+                    WHERE e.institutionId = ?
+                    ORDER BY e.created_at DESC`;
+            params = [me.institutionId];
+        } else {
+            sql = `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name,
+                          (SELECT COUNT(*) FROM online_exam_attempts a WHERE a.exam_id = e.id) AS submission_count,
+                          (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count
+                     FROM online_exams e
+                     LEFT JOIN classes c   ON c.id = e.class_id
+                     LEFT JOIN subjects sub ON sub.id = e.subject_id
+                     LEFT JOIN users u     ON u.id = e.created_by
+                    WHERE e.created_by = ?
+                    ORDER BY e.created_at DESC`;
+            params = [teacherId];
+        }
+        const [rows] = await db.execute(sql, params);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.B.2 List exams for a student to take ----------------------
+//   GET /api/admin/exams/student/:studentId
+//   Returns exams where the student's class+section match, with attempt status.
+app.get('/api/admin/exams/student/:studentId', async (req, res) => {
+    const { studentId } = req.params;
+    try {
+        const [u] = await db.execute('SELECT institutionId, class_id, section FROM users WHERE id = ?', [studentId]);
+        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        const { institutionId, class_id, section } = u[0];
+
+        const [rows] = await db.execute(
+            `SELECT e.id AS exam_id, e.title, e.description, e.time_limit_mins, e.total_marks,
+                    e.class_id, e.section, e.status AS exam_status,
+                    c.className, sub.name AS subject_name,
+                    (SELECT COUNT(*) FROM online_exam_questions q WHERE q.exam_id = e.id) AS question_count,
+                    a.id AS attempt_id, a.status AS attempt_status, a.final_score, a.submitted_at
+               FROM online_exams e
+               LEFT JOIN classes c    ON c.id = e.class_id
+               LEFT JOIN subjects sub ON sub.id = e.subject_id
+               LEFT JOIN online_exam_attempts a ON a.exam_id = e.id AND a.student_id = ?
+              WHERE e.institutionId = ?
+                AND e.class_id = ?
+                AND (e.section IS NULL OR e.section = ?)
+                AND e.status = 'published'
+              ORDER BY e.created_at DESC`,
+            [studentId, institutionId, class_id || 0, section || '']
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.B.3 Get single exam (with questions, for editor or preview)
+app.get('/api/admin/exams/:examId', async (req, res) => {
+    try {
+        const [exam] = await db.execute(
+            `SELECT e.*, c.className, sub.name AS subject_name, u.name AS created_by_name
+               FROM online_exams e
+               LEFT JOIN classes c   ON c.id = e.class_id
+               LEFT JOIN subjects sub ON sub.id = e.subject_id
+               LEFT JOIN users u     ON u.id = e.created_by
+              WHERE e.id = ?`,
+            [req.params.examId]
+        );
+        if (exam.length === 0) return res.status(404).json({ error: 'Exam not found' });
+
+        const [questions] = await db.execute(
+            'SELECT * FROM online_exam_questions WHERE exam_id = ? ORDER BY question_order, id',
+            [req.params.examId]
+        );
+        const qList = questions.map(q => ({ ...q, options: parseJsonSafe(q.options, null) }));
+        res.json({ ...exam[0], questions: qList });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.B.4 Create or update exam --------------------------------
+//   Body: { institutionId, title, description, class_id, section, subject_id,
+//           time_limit_mins, status, created_by, questions: [...] }
+app.post('/api/admin/exams', async (req, res) => {
+    const {
+        institutionId, title, description, class_id, section, subject_id,
+        time_limit_mins, status, created_by, questions = []
+    } = req.body;
+    if (!institutionId || !title || !class_id || !created_by) {
+        return res.status(400).json({ error: 'institutionId, title, class_id and created_by are required.' });
+    }
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
+        const [result] = await conn.execute(
+            `INSERT INTO online_exams
+              (institutionId, title, description, class_id, section, subject_id,
+               time_limit_mins, total_marks, created_by, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [institutionId, title, description || null, class_id, section || null,
+             subject_id || null, parseInt(time_limit_mins, 10) || 0, totalMarks,
+             created_by, status || 'published']
+        );
+        const examId = result.insertId;
+
+        for (let i = 0; i < questions.length; i++) {
+            const q = questions[i];
+            await conn.execute(
+                `INSERT INTO online_exam_questions
+                   (exam_id, question_text, question_type, options, correct_answer, marks, question_order)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [examId, q.question_text || '', q.question_type || 'multiple_choice',
+                 q.options ? JSON.stringify(q.options) : null,
+                 q.correct_answer || null, parseInt(q.marks, 10) || 1, i]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true, id: examId });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+app.put('/api/admin/exams/:examId', async (req, res) => {
+    const {
+        title, description, class_id, section, subject_id,
+        time_limit_mins, status, questions = []
+    } = req.body;
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const totalMarks = questions.reduce((sum, q) => sum + (parseInt(q.marks, 10) || 0), 0);
+
+        await conn.execute(
+            `UPDATE online_exams
+                SET title = ?, description = ?, class_id = ?, section = ?, subject_id = ?,
+                    time_limit_mins = ?, total_marks = ?, status = ?
+              WHERE id = ?`,
+            [title, description || null, class_id, section || null, subject_id || null,
+             parseInt(time_limit_mins, 10) || 0, totalMarks, status || 'published',
+             req.params.examId]
+        );
+
+        // Replace questions wholesale. Existing attempts keep their stored
+        // answer_text but the link to question_id may break if user removed
+        // questions — that's by design and warned in the UI.
+        await conn.execute('DELETE FROM online_exam_questions WHERE exam_id = ?', [req.params.examId]);
+        for (let i = 0; i < questions.length; i++) {
+            const q = questions[i];
+            await conn.execute(
+                `INSERT INTO online_exam_questions
+                   (exam_id, question_text, question_type, options, correct_answer, marks, question_order)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [req.params.examId, q.question_text || '', q.question_type || 'multiple_choice',
+                 q.options ? JSON.stringify(q.options) : null,
+                 q.correct_answer || null, parseInt(q.marks, 10) || 1, i]
+            );
+        }
+        await conn.commit();
+        res.json({ success: true });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+app.delete('/api/admin/exams/:examId', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM online_exams WHERE id = ?', [req.params.examId]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// =====================================================================
+// === 16.C ATTEMPTS (student takes the exam) ==========================
+// =====================================================================
+
+// --- 16.C.1 Get questions without answers (for student to take) ---
+app.get('/api/admin/exams/:examId/take', async (req, res) => {
+    try {
+        const [questions] = await db.execute(
+            `SELECT id, question_text, question_type, options, marks, question_order
+               FROM online_exam_questions
+              WHERE exam_id = ?
+              ORDER BY question_order, id`,
+            [req.params.examId]
+        );
+        // Don't leak correct_answer to the client
+        const qList = questions.map(q => ({ ...q, options: parseJsonSafe(q.options, null) }));
+        res.json(qList);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.C.2 Start (or resume) an attempt --------------------------
+app.post('/api/admin/exams/:examId/start', async (req, res) => {
+    const { examId } = req.params;
+    const { student_id } = req.body;
+    if (!student_id) return res.status(400).json({ error: 'student_id required.' });
+    try {
+        const [existing] = await db.execute(
+            'SELECT id, status FROM online_exam_attempts WHERE exam_id = ? AND student_id = ?',
+            [examId, student_id]
+        );
+        if (existing.length > 0) {
+            const att = existing[0];
+            if (att.status === 'submitted' || att.status === 'graded') {
+                return res.status(400).json({ error: 'You have already submitted this exam.' });
+            }
+            return res.json({ attempt_id: att.id, resumed: true });
+        }
+        const [result] = await db.execute(
+            'INSERT INTO online_exam_attempts (exam_id, student_id, status, started_at) VALUES (?, ?, ?, ?)',
+            [examId, student_id, 'in_progress', nowSQL()]
+        );
+        res.json({ attempt_id: result.insertId, resumed: false });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.C.3 Submit answers ----------------------------------------
+//   Body: { student_id, answers: { question_id: answer_text, ... } }
+//   Auto-grades MCQ rows where correct_answer matches student's answer.
+app.post('/api/admin/attempts/:attemptId/submit', async (req, res) => {
+    const { attemptId } = req.params;
+    const { student_id, answers = {} } = req.body;
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        const [att] = await conn.execute(
+            'SELECT exam_id, student_id, status FROM online_exam_attempts WHERE id = ?',
+            [attemptId]
+        );
+        if (att.length === 0) throw new Error('Attempt not found');
+        if (att[0].student_id !== parseInt(student_id, 10)) throw new Error('Not your attempt');
+        if (att[0].status !== 'in_progress') throw new Error('Already submitted');
+
+        const examId = att[0].exam_id;
+        const [qs] = await conn.execute(
+            'SELECT id, question_type, correct_answer, marks FROM online_exam_questions WHERE exam_id = ?',
+            [examId]
+        );
+
+        let autoScore = 0;
+        for (const q of qs) {
+            const studentAns = (answers[q.id] ?? '').toString();
+            let marksAwarded = null;
+            let isAuto = 0;
+            if (q.question_type === 'multiple_choice' && q.correct_answer) {
+                if (studentAns === q.correct_answer) {
+                    marksAwarded = q.marks;
+                    autoScore += q.marks;
+                } else {
+                    marksAwarded = 0;
+                }
+                isAuto = 1;
+            }
+            await conn.execute(
+                `INSERT INTO online_exam_answers (attempt_id, question_id, answer_text, marks_awarded, is_auto_graded)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE answer_text = VALUES(answer_text),
+                                         marks_awarded = VALUES(marks_awarded),
+                                         is_auto_graded = VALUES(is_auto_graded)`,
+                [attemptId, q.id, studentAns || null, marksAwarded, isAuto]
+            );
+        }
+
+        // If every question was MCQ, mark as graded immediately. Otherwise
+        // keep status='submitted' until a teacher grades the written ones.
+        const allMCQ = qs.every(q => q.question_type === 'multiple_choice');
+        await conn.execute(
+            `UPDATE online_exam_attempts
+                SET status = ?, submitted_at = ?, final_score = ?, graded_at = ?
+              WHERE id = ?`,
+            [allMCQ ? 'graded' : 'submitted', nowSQL(), autoScore,
+             allMCQ ? nowSQL() : null, attemptId]
+        );
+        await conn.commit();
+        res.json({ success: true, auto_score: autoScore, fully_graded: allMCQ });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+// --- 16.C.4 List submissions for an exam (teacher view) ----------
+app.get('/api/admin/exams/:examId/submissions', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT a.id AS attempt_id, a.status, a.final_score, a.submitted_at, a.graded_at,
+                    u.id AS student_id, u.name AS student_name, u.roll_no, u.username
+               FROM online_exam_attempts a
+               JOIN users u ON u.id = a.student_id
+              WHERE a.exam_id = ?
+              ORDER BY u.name`,
+            [req.params.examId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.C.5 Submission detail (for grading or student review) -----
+app.get('/api/admin/attempts/:attemptId', async (req, res) => {
+    try {
+        const [att] = await db.execute(
+            `SELECT a.*, e.title AS exam_title, e.total_marks, e.class_id,
+                    u.name AS student_name, u.roll_no, u.username,
+                    g.name AS graded_by_name
+               FROM online_exam_attempts a
+               JOIN users u ON u.id = a.student_id
+               JOIN online_exams e ON e.id = a.exam_id
+               LEFT JOIN users g ON g.id = a.graded_by
+              WHERE a.id = ?`,
+            [req.params.attemptId]
+        );
+        if (att.length === 0) return res.status(404).json({ error: 'Attempt not found' });
+
+        const [rows] = await db.execute(
+            `SELECT q.id AS question_id, q.question_text, q.question_type, q.options,
+                    q.correct_answer, q.marks, q.question_order,
+                    ans.answer_text, ans.marks_awarded, ans.is_auto_graded
+               FROM online_exam_questions q
+               LEFT JOIN online_exam_answers ans
+                 ON ans.question_id = q.id AND ans.attempt_id = ?
+              WHERE q.exam_id = ?
+              ORDER BY q.question_order, q.id`,
+            [req.params.attemptId, att[0].exam_id]
+        );
+        const items = rows.map(r => ({ ...r, options: parseJsonSafe(r.options, null) }));
+        res.json({ attempt: att[0], items });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 16.C.6 Save grade for one attempt ---------------------------
+//   Body: { graded_answers: [{question_id, marks_awarded}], teacher_feedback, graded_by }
+app.post('/api/admin/attempts/:attemptId/grade', async (req, res) => {
+    const { attemptId } = req.params;
+    const { graded_answers = [], teacher_feedback, graded_by } = req.body;
+    if (!graded_by) return res.status(400).json({ error: 'graded_by required.' });
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        let total = 0;
+        for (const g of graded_answers) {
+            const marks = parseFloat(g.marks_awarded);
+            const safe = isNaN(marks) ? 0 : marks;
+            total += safe;
+            await conn.execute(
+                `INSERT INTO online_exam_answers (attempt_id, question_id, marks_awarded)
+                 VALUES (?, ?, ?)
+                 ON DUPLICATE KEY UPDATE marks_awarded = VALUES(marks_awarded)`,
+                [attemptId, g.question_id, safe]
+            );
+        }
+        await conn.execute(
+            `UPDATE online_exam_attempts
+                SET status = 'graded', final_score = ?, graded_at = ?, graded_by = ?, teacher_feedback = ?
+              WHERE id = ?`,
+            [total, nowSQL(), graded_by, teacher_feedback || null, attemptId]
+        );
+        await conn.commit();
+        res.json({ success: true, final_score: total });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
 // =====================================================================
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`));   

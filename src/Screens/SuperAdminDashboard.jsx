@@ -6,9 +6,10 @@ import ManageLogin from './ManageLogin';
 import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import Attendance from '../components/Attendance/Attendance';
+import Exams from '../components/Exams/Exams';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
-import { MODULES } from './Modules';
+import { TAB_TO_MODULE, MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
 function DashboardShell() {
@@ -52,7 +53,8 @@ function DashboardShell() {
       case 'manage-login':      return <ManageLogin />;
       case 'timetable':         return <Timetable />;
       case 'academic-calendar': return <AcademicCalendar />;
-      case 'Attendance':        return <Attendance />;
+      case 'attendance':        return <Attendance />;
+      case 'Exams':             return <Exams />;
       case 'profile':           return <Profile />;
       default:
         return (
