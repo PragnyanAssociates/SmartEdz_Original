@@ -5,9 +5,10 @@ import Overview from './Overview';
 import ManageLogin from './ManageLogin';
 import Timetable from '../components/Timetable/Timetable';
 import AcademicCalendar from '../components/Calendar/AcademicCalendar';
+import Attendance from '../components/Attendance/Attendance';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
-import { TAB_TO_MODULE, MODULES } from './Modules';
+import { MODULES } from './Modules';
 import { ShieldOff } from 'lucide-react';
 
 function DashboardShell() {
@@ -40,9 +41,7 @@ function DashboardShell() {
               <ShieldOff size={32} />
             </div>
             <h2 className="text-3xl font-black text-slate-900">Access Denied</h2>
-            <p className="text-slate-500 mt-2 font-medium">
-              You don't have permission to view this module.
-            </p>
+            <p className="text-slate-500 mt-2 font-medium">You don't have permission to view this module.</p>
           </div>
         </div>
       );
@@ -53,6 +52,7 @@ function DashboardShell() {
       case 'manage-login':      return <ManageLogin />;
       case 'timetable':         return <Timetable />;
       case 'academic-calendar': return <AcademicCalendar />;
+      case 'Attendance':        return <Attendance />;
       case 'profile':           return <Profile />;
       default:
         return (

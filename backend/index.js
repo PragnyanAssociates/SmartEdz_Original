@@ -29,8 +29,20 @@ const DEFAULT_MODULES = [
     'Overview',
     'Manage Logins',
     'Timetable',
-    'Academic Calendar'
+    'Academic Calendar',
+    'Attendance'
 ];
+
+// =====================================================================
+//  SYSTEM ROLES — These three are seeded for every school and cannot
+//  be renamed or deleted by anyone (not even Super Admin from the UI).
+//  Future modules (Attendance, Marks, etc.) can rely on these EXACT
+//  names without worrying about case/plural variations.
+//
+//  IMPORTANT: must mirror SYSTEM_ROLES in RolesTab.jsx on the frontend.
+// =====================================================================
+const SYSTEM_ROLES = ['Super Admin', 'Student', 'Teacher'];
+const isSystemRole = (name) => SYSTEM_ROLES.includes(name);
 
 const PLAN_DAYS = {
     '7 days': 7, '30 days': 30, '90 days': 90, '180 days': 180,
@@ -50,6 +62,9 @@ function computePlanStatus(plan, startDateStr) {
     return { planEndDate: end.toISOString().slice(0, 10), daysLeft, expired: daysLeft < 0 };
 }
 
+// We still keep flexible matching here so that any role whose name
+// contains "teacher" (e.g. "Senior Teacher") syncs subjects too. The
+// system role 'Teacher' is just the canonical default.
 const isTeacherRoleName = (role) => role && role.toLowerCase().includes('teacher');
 
 async function syncTeacherSubjects(conn, userId, role, subjectIds) {
@@ -65,13 +80,11 @@ async function syncTeacherSubjects(conn, userId, role, subjectIds) {
 // =====================================================================
 // === 1. AUTHENTICATION (accepts email OR username) ===================
 // =====================================================================
-// --- Replace your existing /api/login block with this one ---
 app.post('/api/login', async (req, res) => {
     const identifier = req.body.identifier || req.body.email;
     const { password } = req.body;
     try {
         const [rows] = await db.execute(
-            // ADDED profile_pic to the SELECT statement below
             'SELECT id, name, email, username, role, institutionId, status, profile_pic FROM users WHERE (email = ? OR username = ?) AND password = ?',
             [identifier, identifier, password]
         );
@@ -90,14 +103,11 @@ app.post('/api/login', async (req, res) => {
         const token = jwt.sign({ id: user.id, role: user.role, instId: user.institutionId }, JWT_SECRET, { expiresIn: '24h' });
         res.json({
             success: true, token,
-            user: { 
-                id: user.id, 
-                name: user.name, 
-                email: user.email, 
-                username: user.username, 
-                role: user.role, 
+            user: {
+                id: user.id, name: user.name, email: user.email,
+                username: user.username, role: user.role,
                 institutionId: user.institutionId,
-                profile_pic: user.profile_pic // ADDED: Now sidebar gets pic on login
+                profile_pic: user.profile_pic
             }
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -116,6 +126,7 @@ app.get('/api/developer/data', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// --- Onboard a new institution. Seeds ALL THREE system roles now. ---
 app.post('/api/developer/onboard', async (req, res) => {
     const { name, type, logo, schoolKey, school_email, phone, usage_plan, plan_start_date,
             superAdminName, superAdminEmail, superAdminPassword } = req.body;
@@ -129,11 +140,22 @@ app.post('/api/developer/onboard', async (req, res) => {
             [name, type, logo, schoolKey, school_email, phone, plan, startDate]
         );
         const instId = inst.insertId;
+
+        // Create the Super Admin user account
         await conn.execute(
             'INSERT INTO users (name, email, password, role, institutionId) VALUES (?, ?, ?, ?, ?)',
             [superAdminName, superAdminEmail, superAdminPassword, 'Super Admin', instId]
         );
-        await conn.execute('INSERT INTO roles (role_name, institutionId) VALUES (?, ?)', ['Super Admin', instId]);
+
+        // Seed all 3 system roles. INSERT IGNORE is unnecessary because
+        // the school is brand new, but cheap insurance against re-runs.
+        for (const roleName of SYSTEM_ROLES) {
+            await conn.execute(
+                'INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)',
+                [roleName, instId]
+            );
+        }
+
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
@@ -159,6 +181,15 @@ app.put('/api/developer/institution/:id', async (req, res) => {
             'UPDATE users SET name = ?, email = ?, password = ? WHERE institutionId = ? AND role = "Super Admin"',
             [superAdminName, superAdminEmail, superAdminPassword, id]
         );
+
+        // Defensive: heal any pre-existing school that's missing system roles
+        for (const roleName of SYSTEM_ROLES) {
+            await conn.execute(
+                'INSERT IGNORE INTO roles (role_name, institutionId) VALUES (?, ?)',
+                [roleName, id]
+            );
+        }
+
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
@@ -177,6 +208,8 @@ app.delete('/api/developer/institution/:id', async (req, res) => {
 
 // =====================================================================
 // === 3. SUPER ADMIN — School Aggregate Data ==========================
+//          Also returns the systemRoles array so the frontend can lock
+//          them without having to maintain its own list.
 // =====================================================================
 app.get('/api/admin/data/:instId', async (req, res) => {
     const { instId } = req.params;
@@ -196,13 +229,17 @@ app.get('/api/admin/data/:instId', async (req, res) => {
             teacherSubjects[r.teacher_id].push(r.subject_id);
         });
         const institution = inst[0] ? { ...inst[0], ...computePlanStatus(inst[0].usage_plan, inst[0].plan_start_date) } : null;
-        res.json({ users, classes, academicYears: years, roles, subjects, teacherSubjects, modules: DEFAULT_MODULES, institution });
+        res.json({
+            users, classes, academicYears: years, roles, subjects,
+            teacherSubjects, modules: DEFAULT_MODULES, institution,
+            systemRoles: SYSTEM_ROLES
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
 // =====================================================================
-// === 4. USERS — Full CRUD (now with username + profile fields) =======
+// === 4. USERS — Full CRUD ============================================
 // =====================================================================
 app.post('/api/admin/users', async (req, res) => {
     const { name, email, username, password, role, institutionId, modules,
@@ -274,14 +311,23 @@ app.delete('/api/admin/users/:id', async (req, res) => {
 
 
 // =====================================================================
-// === 5. ROLES ========================================================
+// === 5. ROLES — system roles cannot be renamed or deleted ============
 // =====================================================================
 app.post('/api/admin/roles', async (req, res) => {
     const { role_name, institutionId } = req.body;
+    const trimmed = (role_name || '').trim();
+    if (!trimmed) return res.status(400).json({ error: 'Role name is required.' });
+    // Disallow creating a duplicate of any system role name (case-sensitive
+    // unique key handles same-case; we also block trivial collisions).
     try {
-        await db.execute('INSERT INTO roles (role_name, institutionId) VALUES (?, ?)', [role_name, institutionId]);
+        await db.execute('INSERT INTO roles (role_name, institutionId) VALUES (?, ?)', [trimmed, institutionId]);
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A role with that name already exists.' });
+        }
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.put('/api/admin/roles/:id', async (req, res) => {
@@ -291,18 +337,32 @@ app.put('/api/admin/roles/:id', async (req, res) => {
     try {
         await conn.beginTransaction();
         const [existing] = await conn.execute('SELECT role_name FROM roles WHERE id = ?', [id]);
-        if (existing.length === 0) throw new Error('Role not found');
-        const oldName = existing[0].role_name;
-        if (oldName === 'Super Admin') {
+        if (existing.length === 0) {
             await conn.rollback();
-            return res.status(400).json({ error: 'The system role "Super Admin" cannot be renamed.' });
+            return res.status(404).json({ error: 'Role not found' });
         }
+        const oldName = existing[0].role_name;
+
+        // System role guard
+        if (isSystemRole(oldName)) {
+            await conn.rollback();
+            return res.status(400).json({ error: `The system role "${oldName}" cannot be renamed.` });
+        }
+        // Also block renaming into a system role name
+        if (isSystemRole(role_name)) {
+            await conn.rollback();
+            return res.status(400).json({ error: `"${role_name}" is a reserved system role name.` });
+        }
+
         await conn.execute('UPDATE roles SET role_name = ? WHERE id = ?', [role_name, id]);
         await conn.execute('UPDATE users SET role = ? WHERE role = ? AND institutionId = ?', [role_name, oldName, institutionId]);
         await conn.commit();
         res.json({ success: true });
     } catch (err) {
         await conn.rollback();
+        if (err.code === 'ER_DUP_ENTRY' || err.errno === 1062) {
+            return res.status(400).json({ error: 'A role with that name already exists.' });
+        }
         res.status(500).json({ error: err.message });
     } finally { conn.release(); }
 });
@@ -311,7 +371,9 @@ app.delete('/api/admin/roles/:id', async (req, res) => {
     try {
         const [rows] = await db.execute('SELECT role_name FROM roles WHERE id = ?', [req.params.id]);
         if (rows.length === 0) return res.status(404).json({ error: 'Role not found' });
-        if (rows[0].role_name === 'Super Admin') return res.status(400).json({ error: 'The system role "Super Admin" cannot be deleted.' });
+        if (isSystemRole(rows[0].role_name)) {
+            return res.status(400).json({ error: `The system role "${rows[0].role_name}" cannot be deleted.` });
+        }
         await db.execute('DELETE FROM roles WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -687,8 +749,6 @@ app.get('/api/profile/:id', async (req, res) => {
 
 app.put('/api/profile/:id', async (req, res) => {
     const { id } = req.params;
-    // Whitelist: only these fields can be self-edited.
-    // password, role, status, institutionId, class_id, section are NOT here.
     const { name, email, username, phone_no, dob, gender, address, profile_pic } = req.body;
     try {
         await db.execute(
@@ -709,6 +769,159 @@ app.put('/api/profile/:id', async (req, res) => {
         }
         res.status(500).json({ error: err.message });
     }
+});
+
+
+
+// =====================================================================
+// === 15. ATTENDANCE ==================================================
+//   One row per user per day. Tracks marker + last editor.
+//   Granularity: daily (no period/subject linkage).
+//   Status codes: P (Present), A (Absent), L (Late).
+// =====================================================================
+
+// --- 15.1 Roster for marking ---------------------------------------
+//   GET /api/admin/attendance/roster/:instId?category=students|teachers|other&date=YYYY-MM-DD&class_id=<id>
+//   Returns the list of users in that category along with each user's
+//   current status for the given date (or null if not marked yet).
+app.get('/api/admin/attendance/roster/:instId', async (req, res) => {
+    const { instId } = req.params;
+    const { category = 'students', date, class_id } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+
+    try {
+        let where = 'u.institutionId = ?';
+        const params = [instId];
+
+        if (category === 'students') {
+            where += " AND LOWER(u.role) = 'student'";
+            if (class_id) { where += ' AND u.class_id = ?'; params.push(class_id); }
+        } else if (category === 'teachers') {
+            where += " AND LOWER(u.role) LIKE '%teacher%'";
+        } else if (category === 'other') {
+            // Everyone who is NOT student/teacher/super admin/developer
+            where += " AND LOWER(u.role) NOT LIKE '%teacher%' AND LOWER(u.role) NOT IN ('student','super admin','developer')";
+        }
+
+        const sql = `
+            SELECT u.id, u.name, u.username, u.role, u.profile_pic, u.roll_no, u.class_id, u.section,
+                   a.status, a.marked_by, a.marked_at, a.updated_by, a.updated_at,
+                   mb.name AS marked_by_name, mb.role AS marked_by_role,
+                   ub.name AS updated_by_name, ub.role AS updated_by_role
+              FROM users u
+              LEFT JOIN attendance a ON a.user_id = u.id AND a.attendance_date = ?
+              LEFT JOIN users mb ON mb.id = a.marked_by
+              LEFT JOIN users ub ON ub.id = a.updated_by
+             WHERE ${where} AND u.status = 'active'
+             ORDER BY u.name`;
+        const [rows] = await db.execute(sql, [targetDate, ...params]);
+        res.json({ date: targetDate, users: rows });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 15.2 Bulk mark / update attendance ----------------------------
+//   POST /api/admin/attendance/mark
+//   Body: { institutionId, date, actor_id, entries: [{user_id, status}] }
+//   Upserts each row. If row exists → updates status, updated_by, updated_at.
+//   If row doesn't exist → inserts with marked_by, marked_at.
+app.post('/api/admin/attendance/mark', async (req, res) => {
+    const { institutionId, date, actor_id, entries } = req.body;
+    if (!institutionId || !date || !actor_id || !Array.isArray(entries)) {
+        return res.status(400).json({ error: 'institutionId, date, actor_id and entries[] are required.' });
+    }
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+    const conn = await db.getConnection();
+    try {
+        await conn.beginTransaction();
+        for (const e of entries) {
+            if (!e.user_id || !['P', 'A', 'L'].includes(e.status)) continue;
+
+            // Does a row already exist?
+            const [exists] = await conn.execute(
+                'SELECT id FROM attendance WHERE user_id = ? AND attendance_date = ?',
+                [e.user_id, date]
+            );
+
+            if (exists.length === 0) {
+                // First time this user gets attendance for this date
+                await conn.execute(
+                    `INSERT INTO attendance
+                       (institutionId, user_id, attendance_date, status, marked_by, marked_at)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [institutionId, e.user_id, date, e.status, actor_id, now]
+                );
+            } else {
+                // Row exists — record the edit
+                await conn.execute(
+                    `UPDATE attendance
+                        SET status = ?, updated_by = ?, updated_at = ?
+                      WHERE user_id = ? AND attendance_date = ?`,
+                    [e.status, actor_id, now, e.user_id, date]
+                );
+            }
+        }
+        await conn.commit();
+        res.json({ success: true, count: entries.length });
+    } catch (err) {
+        await conn.rollback();
+        res.status(500).json({ error: err.message });
+    } finally { conn.release(); }
+});
+
+
+// --- 15.3 History for one user -------------------------------------
+//   GET /api/admin/attendance/history/:userId?from=YYYY-MM-DD&to=YYYY-MM-DD
+//   Returns each row in the range along with summary stats.
+app.get('/api/admin/attendance/history/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const { from, to } = req.query;
+    if (!from || !to) return res.status(400).json({ error: 'from and to dates required.' });
+    try {
+        const [rows] = await db.execute(
+            `SELECT a.id, a.attendance_date, a.status,
+                    a.marked_by, a.marked_at, a.updated_by, a.updated_at,
+                    mb.name AS marked_by_name, mb.role AS marked_by_role,
+                    ub.name AS updated_by_name, ub.role AS updated_by_role
+               FROM attendance a
+               LEFT JOIN users mb ON mb.id = a.marked_by
+               LEFT JOIN users ub ON ub.id = a.updated_by
+              WHERE a.user_id = ? AND a.attendance_date BETWEEN ? AND ?
+              ORDER BY a.attendance_date DESC`,
+            [userId, from, to]
+        );
+        const summary = {
+            total:   rows.length,
+            present: rows.filter(r => r.status === 'P').length,
+            absent:  rows.filter(r => r.status === 'A').length,
+            late:    rows.filter(r => r.status === 'L').length
+        };
+        summary.percentage = summary.total > 0
+            ? (((summary.present + summary.late) / summary.total) * 100).toFixed(1)
+            : '0.0';
+        res.json({ rows, summary });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// --- 15.4 Teacher's marking scope ----------------------------------
+//   GET /api/admin/attendance/teacher-classes/:teacherId
+//   Returns the set of distinct classes this teacher is timetabled into.
+//   Frontend uses this to scope the class dropdown.
+app.get('/api/admin/attendance/teacher-classes/:teacherId', async (req, res) => {
+    const { teacherId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            `SELECT DISTINCT c.id, c.className, c.section
+               FROM timetable_entries te
+               JOIN classes c ON c.id = te.class_id
+              WHERE te.teacher_id = ?
+              ORDER BY c.className, c.section`,
+            [teacherId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 
