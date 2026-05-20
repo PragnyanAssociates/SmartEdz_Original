@@ -7,7 +7,6 @@ import { API_BASE_URL } from '../apiConfig';
 //  Timetable). Each subject is linked to one or more classes via a
 //  multi-select. The Marks Entry grid uses these links to show only a
 //  class's own subjects.
-//
 //  A subject with NO classes selected is treated as "all classes".
 // =====================================================================
 
