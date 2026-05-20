@@ -45,7 +45,7 @@ export const MODULES = [
     navigateTo: '/AcademicCalendar'
   },
   {
-    id: 'Attendance',
+    id: 'attendance',
     module_name: 'Attendance',
     label: 'Attendance',
     title: 'Attendance',

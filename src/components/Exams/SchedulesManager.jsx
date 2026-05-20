@@ -75,7 +75,6 @@ export default function SchedulesManager({ canManage }) {
     return schedules.filter(s => {
       if (s.exam_type !== activeTab) return false;
       if (filterClass === 'all') return true;
-      if (filterClass === 'none' && s.class_id == null) return true;
       return String(s.class_id) === String(filterClass);
     });
   }, [schedules, activeTab, filterClass]);
@@ -152,6 +151,7 @@ export default function SchedulesManager({ canManage }) {
   // -----------------------------------------------------------------
   const handleSave = async () => {
     if (!form.title.trim()) return alert('Title is required.');
+    if (!form.class_id) return alert('Pick a class.');
     if (form.rows.length === 0) return alert('Add at least one row.');
 
     setSaving(true);
@@ -179,7 +179,7 @@ export default function SchedulesManager({ canManage }) {
         title: form.title.trim(),
         subtitle: form.subtitle.trim() || null,
         exam_type: form.exam_type,
-        class_id: form.class_id ? parseInt(form.class_id, 10) : null,
+        class_id: parseInt(form.class_id, 10),
         section: form.section.trim() || null,
         schedule_data: payloadRows,
         created_by: user.id
@@ -244,7 +244,6 @@ export default function SchedulesManager({ canManage }) {
           <select value={filterClass} onChange={e => setFilterClass(e.target.value)}
             className="bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500/10 cursor-pointer shadow-sm">
             <option value="all">All classes</option>
-            <option value="none">— All-school —</option>
             {classes.map(c => (
               <option key={c.id} value={c.id}>
                 {c.className}{c.section ? ` - ${c.section}` : ''}
@@ -287,7 +286,7 @@ export default function SchedulesManager({ canManage }) {
                     {s.subtitle && <div className="text-xs text-slate-400">{s.subtitle}</div>}
                   </td>
                   <td className="p-4 text-sm font-medium text-slate-600">
-                    {s.className ? `${s.className}${s.section ? ` - ${s.section}` : ''}` : <span className="italic text-slate-400">All classes</span>}
+                    {s.className ? `${s.className}${s.section ? ` - ${s.section}` : ''}` : <span className="italic text-slate-400">—</span>}
                   </td>
                   <td className="p-4 text-sm text-slate-500">{s.created_by_name || '—'}</td>
                   <td className="p-4 text-right">
@@ -348,11 +347,11 @@ export default function SchedulesManager({ canManage }) {
                     <option value="External">Govt Schedule</option>
                   </select>
                 </FormField>
-                <FormField label="Class">
+                <FormField label="Class" required>
                   <select value={form.class_id}
                     onChange={e => setForm({ ...form, class_id: e.target.value })}
                     className={inputCls}>
-                    <option value="">All classes</option>
+                    <option value="">Select class…</option>
                     {classes.map(c => (
                       <option key={c.id} value={c.id}>
                         {c.className}{c.section ? ` - ${c.section}` : ''}
