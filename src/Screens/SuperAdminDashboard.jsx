@@ -8,7 +8,7 @@ import AcademicCalendar from '../components/Calendar/AcademicCalendar';
 import Attendance from '../components/Attendance/Attendance';
 import Exams from '../components/Exams/Exams';
 import Reports from '../components/Reports/Reports';
-import Reports from '../components/Performance/Performance';
+import Performance from '../components/Performance/Performance';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
