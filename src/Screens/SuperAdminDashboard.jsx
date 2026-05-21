@@ -12,6 +12,7 @@ import Performance from '../components/Performance/Performance';
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
+import { classGroupOf }   from '../components/Performance/PerfUtils';
 import { ShieldOff } from 'lucide-react';
 
 function DashboardShell() {
