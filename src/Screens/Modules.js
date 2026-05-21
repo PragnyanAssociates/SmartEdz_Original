@@ -68,6 +68,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/3029/3029337.png',
     navigateTo: '/Reports'
   },
+  {
+    id: 'Performance',
+    module_name: 'Performance',
+    label: 'Performance',
+    title: 'Performance',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/939/939354.png',
+    navigateTo: '/Performance'
+  },
   { 
     id: 'profile',   
     module_name: 'Profile',       
