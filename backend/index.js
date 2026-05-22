@@ -41,7 +41,8 @@ const DEFAULT_MODULES = [
     'Gallery',
     'Homework',
     'Meals',
-    'PTM'
+    'PTM',
+    'OnlineClasses'
 ];
 
 // =====================================================================
@@ -3048,6 +3049,113 @@ app.put('/api/admin/ptm/:id', async (req, res) => {
 app.delete('/api/admin/ptm/:id', async (req, res) => {
     try {
         await db.execute('DELETE FROM ptm_meetings WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+}); 
+// --- Multer config for Online Classes ---
+const videoUploadDir = 'public/uploads/online_classes';
+if (!fs.existsSync(videoUploadDir)) { fs.mkdirSync(videoUploadDir, { recursive: true }); }
+const videoStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, videoUploadDir),
+    filename: (req, file, cb) => cb(null, 'vid_' + Date.now() + path.extname(file.originalname))
+});
+const videoUpload = multer({ storage: videoStorage, limits: { fileSize: 500 * 1024 * 1024 } }); // 500MB limit
+
+// =====================================================================
+// === 22. ONLINE CLASSES ==============================================
+// =====================================================================
+
+// --- 22.1 List Classes for Admin/Teacher ---
+app.get('/api/admin/online-classes/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            `SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+               FROM online_classes o
+               LEFT JOIN classes c ON c.id = o.class_id
+               LEFT JOIN subjects s ON s.id = o.subject_id
+               LEFT JOIN users t ON t.id = o.teacher_id
+              WHERE o.institutionId = ?
+              ORDER BY o.class_datetime DESC`,
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.2 List Classes for Student ---
+app.get('/api/admin/online-classes/student/:studentId', async (req, res) => {
+    try {
+        const [u] = await db.execute('SELECT institutionId, class_id FROM users WHERE id = ?', [req.params.studentId]);
+        if (u.length === 0) return res.status(404).json({ error: 'Student not found' });
+        
+        const [rows] = await db.execute(
+            `SELECT o.*, c.className, c.section, s.name AS subject_name, t.name AS teacher_name
+               FROM online_classes o
+               LEFT JOIN classes c ON c.id = o.class_id
+               LEFT JOIN subjects s ON s.id = o.subject_id
+               LEFT JOIN users t ON t.id = o.teacher_id
+              WHERE o.institutionId = ? AND (o.class_id IS NULL OR o.class_id = ?)
+              ORDER BY o.class_datetime DESC`,
+            [u[0].institutionId, u[0].class_id || 0]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.3 Create Class (Multipart Form Data) ---
+app.post('/api/admin/online-classes', videoUpload.single('videoFile'), async (req, res) => {
+    const { institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, created_by } = req.body;
+    let video_path = req.file ? `/public/uploads/online_classes/${req.file.filename}` : null;
+
+    try {
+        const [result] = await db.execute(
+            `INSERT INTO online_classes 
+               (institutionId, title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, video_path, topic, description, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                institutionId, title, class_type, class_id || null, subject_id, teacher_id, 
+                class_datetime, meet_link || null, video_path, topic || null, description || null, created_by
+            ]
+        );
+        res.json({ success: true, id: result.insertId });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.4 Update Class (Multipart Form Data) ---
+app.put('/api/admin/online-classes/:id', videoUpload.single('videoFile'), async (req, res) => {
+    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description } = req.body;
+    try {
+        const [[existing]] = await db.execute('SELECT video_path FROM online_classes WHERE id = ?', [req.params.id]);
+        let video_path = existing.video_path;
+
+        if (req.file) {
+            // Delete old file if replacing
+            if (video_path) {
+                const oldPath = path.join(__dirname, '..', video_path);
+                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            }
+            video_path = `/public/uploads/online_classes/${req.file.filename}`;
+        }
+
+        await db.execute(
+            `UPDATE online_classes 
+                SET title=?, class_type=?, class_id=?, subject_id=?, teacher_id=?, class_datetime=?, meet_link=?, video_path=?, topic=?, description=?
+              WHERE id=?`,
+            [title, class_type, class_id || null, subject_id, teacher_id, class_datetime, meet_link || null, video_path, topic || null, description || null, req.params.id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// --- 22.5 Delete Class ---
+app.delete('/api/admin/online-classes/:id', async (req, res) => {
+    try {
+        const [[existing]] = await db.execute('SELECT video_path FROM online_classes WHERE id = ?', [req.params.id]);
+        if (existing && existing.video_path) {
+            const oldPath = path.join(__dirname, '..', existing.video_path);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+        }
+        await db.execute('DELETE FROM online_classes WHERE id = ?', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
