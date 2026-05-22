@@ -14,11 +14,13 @@ import Gallery from '../components/Gallery/Gallery';
 import Homework from '../components/Homework/Homework';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM'
+
 import Profile from './Profile';
 import { PermissionsProvider, usePermissions } from './PermissionsContext';
 import { TAB_TO_MODULE, MODULES } from './Modules';
 import { classGroupOf }   from '../components/Performance/PerfUtils';
 import { ShieldOff } from 'lucide-react';
+import OnlineClasses from '../components/OnlineClasses/OnlineClasses';
 
 function DashboardShell() {
   const { isVisible, can, loading } = usePermissions();
@@ -71,6 +73,7 @@ function DashboardShell() {
       case 'Homework':          return <Homework />;
       case 'Meals':             return <Meals />;
       case 'PTM':               return <PTM />;
+      case 'OnlineClasses':      return <OnlineClasses/>;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>

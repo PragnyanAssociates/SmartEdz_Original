@@ -123,6 +123,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/4144/4144517.png', // Or whichever icon you prefer
     navigateTo: '/PTM'
 },
+{
+    id: 'OnlineClasses',
+    module_name: 'OnlineClasses', // Must match the string in DEFAULT_MODULES
+    label: 'Online Classes',
+    title: 'Online Classes',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/8388/8388104.png', // Or whichever icon you prefer
+    navigateTo: '/OnlineClasses'
+},
 
 ];
 
