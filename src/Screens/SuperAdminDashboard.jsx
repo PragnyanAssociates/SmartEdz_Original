@@ -12,6 +12,7 @@ import Performance from '../components/Performance/Performance';
 import Directory from '../components/UsersView/Directory';
 import Gallery from '../components/Gallery/Gallery';
 import Homework from '../components/Homework/Homework';
+import DigitalLabs from '../components/Labs/DigitalLabs';
 import Meals from '../components/Meals/Meals';
 import PTM from '../components/PTM/PTM'
 
@@ -73,7 +74,8 @@ function DashboardShell() {
       case 'Homework':          return <Homework />;
       case 'Meals':             return <Meals />;
       case 'PTM':               return <PTM />;
-      case 'OnlineClasses':      return <OnlineClasses/>;
+      case 'OnlineClasses':     return <OnlineClasses/>;
+      case 'DigitalLabs':       return <DigitalLabs/>;
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">
             <h2 className="text-3xl font-black text-slate-900">Module Under Development</h2>

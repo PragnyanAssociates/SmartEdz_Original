@@ -131,6 +131,14 @@ export const MODULES = [
     imageSource: 'https://cdn-icons-png.flaticon.com/128/8388/8388104.png', // Or whichever icon you prefer
     navigateTo: '/OnlineClasses'
 },
+{
+    id: 'DigitalLabs',
+    module_name: 'DigitalLabs', // Must match the string in DEFAULT_MODULES
+    label: 'Digital Labs',
+    title: 'Digital Labs',
+    imageSource: 'https://cdn-icons-png.flaticon.com/128/19011/19011142.png', // Or whichever icon you prefer
+    navigateTo: '/DigitalLabs'
+},
 
 ];
 
