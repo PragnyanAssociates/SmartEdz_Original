@@ -48,7 +48,7 @@ const DEFAULT_MODULES = [
     'OnlineClasses',
     'DigitalLabs',
     'PreAdmissions',
-    'Study Materials'
+    'StudyMaterials'
 ];
 
 // =====================================================================

@@ -3,7 +3,7 @@ import { useAuth } from "../../context/AuthContext";
 import TeacherAdminMaterialsScreen from "./TeacherAdminMaterialsScreen";
 import StudentMaterialsScreen from "./StudentMaterialsScreen";
 
-const StudyMaterialsScreen = ({ navigation }) => {
+const StudyMaterials = ({ navigation }) => {
   const { user } = useAuth();
 
   if (!user) {
@@ -22,4 +22,4 @@ const StudyMaterialsScreen = ({ navigation }) => {
   return null; 
 };
 
-export default StudyMaterialsScreen;
+export default StudyMaterials;
