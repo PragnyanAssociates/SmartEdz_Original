@@ -45,9 +45,9 @@ const DEFAULT_MODULES = [
     'Homework',
     'Meals',
     'PTM',
-    'Online Classes',
+    'OnlineClasses',
     'DigitalLabs',
-    'Pre Admissions',
+    'PreAdmissions',
     'Study Materials'
 ];
 

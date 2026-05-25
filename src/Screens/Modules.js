@@ -140,16 +140,16 @@ export const MODULES = [
     navigateTo: '/DigitalLabs'
 },
 {
-  id:'PreAdmissionsScreen',
-  module_name:'PreAdmissionsScreen',
+  id:'PreAdmissions',
+  module_name:'PreAdmissions',
   label: 'Pre Admissions',
   title:'Pre Admissions',
   imageSource:'https://cdn-icons-png.flaticon.com/128/10220/10220958.png',
   navigateTo:'/PreAdmissionsScreen'
 },
 {
-  id:'StudyMaterialsScreen',
-  module_name:'StudyMaterialsScreen',
+  id:'Study Materials',
+  module_name:'Study Materials',
   label:'Study Materials',
   title:'Study Materials',
   imageSource:'https://cdn-icons-png.flaticon.com/128/3273/3273259.png',
