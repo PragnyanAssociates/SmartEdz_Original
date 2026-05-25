@@ -39,7 +39,7 @@ const fetchMaterials = useCallback(async () => {
     // Wrap the class group in encodeURIComponent
     const encodedClass = encodeURIComponent(user.class_group);
     
-    const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.id}/${encodedClass}`);
+   const res = await fetch(`${API_BASE_URL}/admin/study-materials/${user.institutionId}/student/${user.id}`);
     
     const data = await res.json();
     setMaterials(Array.isArray(data) ? data : []);
