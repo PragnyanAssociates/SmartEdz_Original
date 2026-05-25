@@ -68,7 +68,7 @@ export default function PreAdmissionsScreen() {
       url.searchParams.append('year', filterYear);
       if (searchText) url.searchParams.append('search', searchText);
 
-      const res = await fetch(url, { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(url);
       const records = await res.json();
       setData(Array.isArray(records) ? records : []);
     } catch (error) {
@@ -150,7 +150,6 @@ export default function PreAdmissionsScreen() {
       if (!validateGrade(formData.school_joined_grade, 'Joined Grade')) return false;
       if (!validateGrade(formData.school_outgoing_grade, 'Outgoing Grade')) return false;
 
-      // ... keeping your comprehensive date validation
       return true;
   };
 
@@ -179,7 +178,6 @@ export default function PreAdmissionsScreen() {
       const url = isEditing ? `${API_BASE_URL}/admin/preadmissions/${currentItem.id}` : `${API_BASE_URL}/admin/preadmissions`;
       const res = await fetch(url, {
         method: isEditing ? 'PUT' : 'POST',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body
       });
 
@@ -200,8 +198,7 @@ export default function PreAdmissionsScreen() {
     if (!window.confirm("Delete this application permanently?")) return;
     try {
       await fetch(`${API_BASE_URL}/admin/preadmissions/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        method: 'DELETE'
       });
       setSelectedItem(null);
       fetchData();
@@ -316,7 +313,7 @@ export default function PreAdmissionsScreen() {
       </div>
 
       {/* --- MODAL FOR CREATE/EDIT --- */}
-     {modalVisible && (
+      {modalVisible && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-4xl p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto custom-scrollbar">
             <button onClick={() => setModalVisible(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-600"><X size={24} /></button>

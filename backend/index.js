@@ -27,19 +27,6 @@ const JWT_SECRET = process.env.JWT_SECRET || 'unified_erp_key_2025';
 // =====================================================================
 // SECURITY MIDDLEWARE: Verify JWT Token
 // =====================================================================
-const verifyToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    if (!authHeader) return res.status(403).json({ error: 'No token provided' });
-
-    const token = authHeader.split(' ')[1]; 
-    if (!token) return res.status(403).json({ error: 'Token format invalid' });
-
-    jwt.verify(token, JWT_SECRET, (err, decoded) => {
-        if (err) return res.status(401).json({ error: 'Unauthorized: Invalid or expired token' });
-        req.user = decoded; 
-        next();
-    });
-};
 
 // =====================================================================
 //  MODULE REGISTRY (mirror in frontend/src/Screens/Modules.js)
@@ -3558,7 +3545,6 @@ app.delete('/api/admin/labs/:id', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
-
 // --- Multer config for Pre-Admissions ---
 const PRE_ADMISSIONS_DIR = 'public/uploads/preadmissions';
 if (!fs.existsSync(PRE_ADMISSIONS_DIR)) { fs.mkdirSync(PRE_ADMISSIONS_DIR, { recursive: true }); }
@@ -3572,11 +3558,11 @@ const preAdmissionsStorage = multer.diskStorage({
 const preAdmissionsUpload = multer({ storage: preAdmissionsStorage });
 
 // =====================================================================
-// === 23. ADMISSIONS / DIRECTORY ======================================
+// === 23. ADMISSIONS / DIRECTORY (OPEN ROUTES) ========================
 // =====================================================================
 
-// --- 23.1 GET all records (Filtered by Institution) ---
-app.get('/api/admin/preadmissions/:instId', verifyToken, async (req, res) => {
+// --- 23.1 GET all records ---
+app.get('/api/admin/preadmissions/:instId', async (req, res) => {
     try {
         const { instId } = req.params;
         const { search, year } = req.query; 
@@ -3606,7 +3592,7 @@ app.get('/api/admin/preadmissions/:instId', verifyToken, async (req, res) => {
 });
 
 // --- 23.2 POST new record ---
-app.post('/api/admin/preadmissions', verifyToken, preAdmissionsUpload.single('photo'), async (req, res) => {
+app.post('/api/admin/preadmissions', preAdmissionsUpload.single('photo'), async (req, res) => {
     const fields = req.body;
     const photo_url = req.file ? `/public/uploads/preadmissions/${req.file.filename}` : null; 
 
@@ -3646,7 +3632,7 @@ app.post('/api/admin/preadmissions', verifyToken, preAdmissionsUpload.single('ph
 });
 
 // --- 23.3 PUT update record ---
-app.put('/api/admin/preadmissions/:id', verifyToken, preAdmissionsUpload.single('photo'), async (req, res) => {
+app.put('/api/admin/preadmissions/:id', preAdmissionsUpload.single('photo'), async (req, res) => {
     const { id } = req.params;
     const fields = req.body;
     let setClauses = [];
@@ -3687,7 +3673,7 @@ app.put('/api/admin/preadmissions/:id', verifyToken, preAdmissionsUpload.single(
 });
 
 // --- 23.4 DELETE record ---
-app.delete('/api/admin/preadmissions/:id', verifyToken, async (req, res) => {
+app.delete('/api/admin/preadmissions/:id', async (req, res) => {
     try {
         const [[record]] = await db.query("SELECT photo_url FROM pre_admissions WHERE id = ?", [req.params.id]);
         const [result] = await db.query("DELETE FROM pre_admissions WHERE id = ?", [req.params.id]);
@@ -3703,7 +3689,6 @@ app.delete('/api/admin/preadmissions/:id', verifyToken, async (req, res) => {
         res.status(500).json({ message: "Failed to delete record." });
     }
 });
-
 // =====================================================================
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`🚀 SmartEdz Backend Active on Port ${PORT}`));   
