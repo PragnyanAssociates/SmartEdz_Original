@@ -2972,83 +2972,49 @@ app.post('/api/admin/meals/menu', async (req, res) => {
 // =====================================================================
 
 // --- 21.1 List PTMs for a School (Admin/Teacher view) ---
+// --- 21.1 List PTMs (The Corrected Version) ---
 app.get('/api/admin/ptm/:instId', async (req, res) => {
     const { userId } = req.query;
-
-    if (!userId) {
-        return res.status(400).json({ error: 'userId is required' });
-    }
+    if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
-        const [users] = await db.execute(
-            'SELECT id, role, institutionId FROM users WHERE id = ?',
-            [userId]
-        );
-
+        const [users] = await db.execute('SELECT role FROM users WHERE id = ?', [userId]);
         if (users.length === 0) return res.status(404).json({ error: 'User not found' });
 
-        const me = users[0];
-        const roleName = me.role;
-        const isStudent = roleName && roleName.toLowerCase() === 'student';
-
-        // 1. Check native system admin
-        let hasGlobalAccess = (roleName === 'Super Admin' || roleName === 'Developer');
-
-        // 2. THE FIX: Check permissions matrix for 'PTM' module read access
-        if (!hasGlobalAccess && !isStudent) {
-            const [perms] = await db.execute(`
-                SELECT p.can_read 
-                  FROM permissions p
-                  JOIN roles r ON r.id = p.role_id
-                 WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'PTM'
-            `, [roleName, req.params.instId]);
-            
-            if (perms.length > 0 && perms[0].can_read) {
-                hasGlobalAccess = true; 
-            }
-        }
+        const userRole = users[0].role;
+        // Super Admin/Dev are the only ones who see EVERYONE'S meetings
+        const isSystemAdmin = (userRole === 'Super Admin' || userRole === 'Developer');
 
         let sql = '';
         let params = [];
 
-        // ===============================
-        // GLOBAL VIEW (Super Admin / Permitted Custom Role)
-        // ===============================
-        if (hasGlobalAccess) {
-            sql = `
-                SELECT p.*, c.className, t.name AS teacher_name
-                  FROM ptm_meetings p
-                  LEFT JOIN classes c ON c.id = p.class_id
-                  LEFT JOIN users t ON t.id = p.teacher_id
-                 WHERE p.institutionId = ?
-                 ORDER BY p.meeting_datetime DESC
-            `;
+        if (isSystemAdmin) {
+            // Master Key: See everything in the school
+            sql = `SELECT p.*, c.className, t.name AS teacher_name
+                   FROM ptm_meetings p
+                   LEFT JOIN classes c ON c.id = p.class_id
+                   LEFT JOIN users t ON t.id = p.teacher_id
+                   WHERE p.institutionId = ?
+                   ORDER BY p.meeting_datetime DESC`;
             params = [req.params.instId];
-        }
-        // ===============================
-        // RESTRICTED VIEW (Teacher / Custom Role without Global Read)
-        // ===============================
-        else {
-            sql = `
-                SELECT p.*, c.className, t.name AS teacher_name
-                  FROM ptm_meetings p
-                  LEFT JOIN classes c ON c.id = p.class_id
-                  LEFT JOIN users t ON t.id = p.teacher_id
-                 WHERE p.institutionId = ?
-                   AND p.teacher_id = ?
-                 ORDER BY p.meeting_datetime DESC
-            `;
+        } else {
+            // Restricted View: Even if they have 'Read' permission, 
+            // we only show meetings where they are the assigned teacher.
+            sql = `SELECT p.*, c.className, t.name AS teacher_name
+                   FROM ptm_meetings p
+                   LEFT JOIN classes c ON c.id = p.class_id
+                   LEFT JOIN users t ON t.id = p.teacher_id
+                   WHERE p.institutionId = ? AND p.teacher_id = ?
+                   ORDER BY p.meeting_datetime DESC`;
             params = [req.params.instId, userId];
         }
 
         const [rows] = await db.execute(sql, params);
         res.json(rows);
-
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
-
 // --- 21.2 List PTMs for a Student ---
 app.get('/api/admin/ptm/student/:studentId', async (req, res) => {
     try {
