@@ -18,6 +18,7 @@ import PTM from '../components/PTM/PTM'
 import PreAdmissions from '../components/preadmissions/PreAdmissions';
 import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsScreen';
 import Syllabus from '../components/Syllabus/Syllabus';
+import WhatsAppLayout from '../components/chat/WhatsAppLayout';
 
 
 import Profile from './Profile';
@@ -83,6 +84,7 @@ function DashboardShell() {
       case 'PreAdmissions':     return <PreAdmissions/>;
       case 'StudyMaterials':   return <StudyMaterialsScreen/>;
       case 'Syllabus':     return <Syllabus/>;
+      case 'GroupChat':   return <WhatsAppLayout/>;
     
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

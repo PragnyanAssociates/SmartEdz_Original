@@ -49,7 +49,8 @@ const DEFAULT_MODULES = [
     'DigitalLabs',
     'PreAdmissions',
     'StudyMaterials',
-    'Syllabus'
+    'Syllabus',
+    'GroupChat'
     
 ];
 
@@ -4085,7 +4086,459 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+// =====================================================================
+// === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ==========
+// =====================================================================
 
+// --- 1. Multer Configuration for Chat Media ---
+const chatStorage = multer.diskStorage({
+    destination: (req, file, cb) => { 
+        cb(null, '/data/uploads'); 
+    },
+    filename: (req, file, cb) => { 
+        // Assuming generateUniqueFilename is defined elsewhere in your index.js
+        cb(null, generateUniqueFilename(file.originalname, 'chat-media')); 
+    }
+});
+
+const chatUpload = multer({
+    storage: chatStorage,
+    fileFilter: (req, file, cb) => {
+        const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|mkv|mp3|m4a|wav|aac|pdf|doc|docx|xls|xlsx|ppt|pptx|txt|zip|rar/;
+        const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+        if (extname) { 
+            return cb(null, true); 
+        }
+        cb(new Error('File type not supported: ' + file.originalname));
+    }
+});
+
+// --- 2. Unified Helper Middleware for Group Permissions ---
+const checkGroupPermission = (action) => async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const [[user]] = await db.query('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
+        if (!user) return res.status(404).json({ message: 'User not found' });
+
+        const isSystemAdmin = (user.role === 'Super Admin' || user.role === 'Developer');
+        
+        if (isSystemAdmin) {
+            req.isAdminEquivalent = true;
+            return next();
+        }
+
+        const [[perm]] = await db.query(`
+            SELECT p.can_${action}
+              FROM permissions p
+              JOIN roles r ON p.role_id = r.id
+             WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'GroupChat'
+        `, [user.role, user.institutionId]);
+
+        if (perm && perm[`can_${action}`]) {
+            req.isAdminEquivalent = true; 
+            return next();
+        }
+
+        if ((action === 'edit' || action === 'delete') && req.params.groupId) {
+            const [[group]] = await db.query('SELECT created_by FROM `groups` WHERE id = ?', [req.params.groupId]);
+            if (group && group.created_by === userId) {
+                req.isAdminEquivalent = false; 
+                return next(); 
+            }
+        }
+
+        return res.status(403).json({ message: `Access denied. Requires ${action} permission for Groups.` });
+    } catch (error) {
+        console.error("Permission check error:", error);
+        res.status(500).json({ message: 'Server error verifying permissions.' });
+    }
+};
+
+// --- 3. API Routes for Group Management ---
+
+app.get('/api/groups/options', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
+
+        const classQuery = `SELECT DISTINCT class_group FROM users WHERE role = 'student' AND institutionId = ? AND class_group IS NOT NULL AND class_group != '' ORDER BY class_group ASC;`;
+        const [classes] = await db.query(classQuery, [user.institutionId]);
+
+        const roleQuery = `SELECT DISTINCT role_name FROM roles WHERE institutionId = ? AND role_name != 'Student';`;
+        const [roles] = await db.query(roleQuery, [user.institutionId]);
+
+        const classList = classes.map(c => c.class_group);
+        const roleList = roles.map(r => r.role_name);
+
+        res.json({ classes: classList, roles: roleList.length > 0 ? roleList : ['Super Admin', 'Teacher'] });
+    } catch (error) {
+        console.error("Error fetching group options:", error);
+        res.status(500).json({ message: "Error fetching group creation options." });
+    }
+});
+
+app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
+    try {
+        const { name, description, selectedCategories, backgroundColor, isReadOnly } = req.body;
+        const creator = req.user;
+        
+        if (!name || !selectedCategories || !Array.isArray(selectedCategories) || selectedCategories.length === 0) {
+            return res.status(400).json({ message: 'Group name and at least one category are required.' });
+        }
+
+        const [[userRecord]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [creator.id]);
+        const instId = userRecord.institutionId;
+
+        let finalCategories = selectedCategories;
+        
+        if (!req.isAdminEquivalent) {
+            finalCategories = selectedCategories.filter(cat => cat !== 'All' && cat !== 'Super Admin' && cat !== 'Developer' && cat !== 'Teacher');
+            if (finalCategories.length === 0) {
+                 return res.status(403).json({ message: 'You can only create groups for specific classes.' });
+            }
+        }
+
+        let whereClauses = [];
+        let queryParams = [];
+        
+        finalCategories.forEach(category => {
+            if (category === 'All' && req.isAdminEquivalent) { 
+                whereClauses.push("institutionId = ?"); 
+                queryParams.push(instId); 
+            }
+            else if (category === 'Super Admin' || category === 'Developer' || category === 'Teacher') { 
+                whereClauses.push("(role = ? AND institutionId = ?)"); 
+                queryParams.push(category, instId); 
+            }
+            else { 
+                whereClauses.push("(class_group = ? AND institutionId = ?)"); 
+                queryParams.push(category, instId); 
+            }
+        });
+
+        const finalWhereClause = whereClauses.includes("institutionId = ?") ? "institutionId = ?" : whereClauses.join(' OR ');
+        const getUsersQuery = `SELECT id FROM users WHERE ${finalWhereClause}`;
+        const [usersToAdd] = await db.query(getUsersQuery, queryParams);
+        let memberIds = usersToAdd.map(u => u.id);
+
+        const connection = await db.getConnection();
+        await connection.beginTransaction();
+        try {
+            const [groupResult] = await connection.query(
+                'INSERT INTO `groups` (institutionId, name, description, created_by, background_color, is_read_only) VALUES (?, ?, ?, ?, ?, ?)', 
+                [instId, name, description || null, creator.id, backgroundColor || '#e5ddd5', isReadOnly ? 1 : 0]
+            );
+            const groupId = groupResult.insertId;
+            const allMemberIds = [...new Set([creator.id, ...memberIds])];
+            
+            if (allMemberIds.length === 0) {
+                await connection.rollback();
+                return res.status(400).json({ message: "No members found for the selected categories." });
+            }
+            
+            const memberValues = allMemberIds.map(userId => [groupId, userId]);
+            await connection.query('INSERT INTO group_members (group_id, user_id) VALUES ?', [memberValues]);
+            await connection.commit();
+            res.status(201).json({ message: 'Group created successfully!', groupId });
+        } catch (err) {
+            await connection.rollback();
+            throw err;
+        } finally {
+            connection.release();
+        }
+    } catch (error) {
+        console.error("Error creating group:", error);
+        res.status(500).json({ message: "Server error while creating group." });
+    }
+});
+
+app.get('/api/groups', async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const [[userRecord]] = await db.query('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
+        const isSystemAdmin = (userRecord.role === 'Super Admin' || userRecord.role === 'Developer');
+        const instId = userRecord.institutionId;
+
+        const query = `
+            SELECT
+                g.id, g.name, g.description, g.created_at, g.created_by, g.group_dp_url, g.background_color, g.status, g.is_read_only,
+                lm.message_text AS last_message_text,
+                DATE_FORMAT(lm.timestamp, '%Y-%m-%dT%H:%i:%s') AS last_message_timestamp,
+                (SELECT COUNT(*) FROM group_chat_messages unread_m WHERE unread_m.group_id = g.id AND unread_m.timestamp > COALESCE(gls.last_seen_timestamp, '1970-01-01') AND unread_m.user_id != ?) AS unread_count
+            FROM \`groups\` g
+            LEFT JOIN group_members gm ON g.id = gm.group_id AND gm.user_id = ?
+            LEFT JOIN group_last_seen gls ON g.id = gls.group_id AND gls.user_id = ?
+            LEFT JOIN (
+                SELECT group_id, message_text, timestamp, ROW_NUMBER() OVER(PARTITION BY group_id ORDER BY timestamp DESC) as rn
+                FROM group_chat_messages
+            ) lm ON g.id = lm.group_id AND lm.rn = 1
+            WHERE g.institutionId = ? AND (gm.user_id IS NOT NULL OR ?) 
+            ORDER BY COALESCE(lm.timestamp, g.created_at) DESC;
+        `;
+        const [groups] = await db.query(query, [userId, userId, userId, instId, isSystemAdmin]);
+        res.json(groups);
+    } catch (error) {
+        console.error("Error fetching user groups:", error);
+        res.status(500).json({ message: "Error fetching groups." });
+    }
+});
+
+app.get('/api/groups/:groupId/details', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const userId = req.user.id;
+        
+        const [[userRecord]] = await db.query('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
+        const isSystemAdmin = (userRecord.role === 'Super Admin' || userRecord.role === 'Developer');
+
+        const [[group]] = await db.query('SELECT * FROM `groups` WHERE id = ? AND institutionId = ?', [groupId, userRecord.institutionId]);
+        if (!group) {
+            return res.status(404).json({ message: 'Group not found or belongs to another institution.' });
+        }
+
+        const [[memberCheck]] = await db.query('SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?', [groupId, userId]);
+        
+        if (!memberCheck && !isSystemAdmin) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+        
+        res.json(group);
+    } catch (error) {
+        console.error("Error fetching group details:", error);
+        res.status(500).json({ message: "Error fetching group details." });
+    }
+});
+
+app.post('/api/groups/:groupId/seen', async (req, res) => {
+    const { groupId } = req.params;
+    const userId = req.user.id;
+    try {
+        const query = `
+            INSERT INTO group_last_seen (group_id, user_id, last_seen_timestamp)
+            VALUES (?, ?, NOW())
+            ON DUPLICATE KEY UPDATE last_seen_timestamp = NOW();
+        `;
+        await db.query(query, [groupId, userId]);
+        res.sendStatus(200);
+    } catch (error) {
+        console.error("Error marking group as seen:", error);
+        res.status(500).json({ message: "Could not mark group as seen." });
+    }
+});
+
+app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) => {
+    const { name, backgroundColor, isReadOnly } = req.body;
+    const { groupId } = req.params;
+    try {
+        const updateReadOnly = isReadOnly !== undefined ? isReadOnly : false;
+        await db.query('UPDATE `groups` SET name = ?, background_color = ?, is_read_only = ? WHERE id = ?', [name, backgroundColor, updateReadOnly ? 1 : 0, groupId]);
+        res.json({ message: 'Group updated successfully.' });
+    } catch (error) {
+        console.error("Error updating group:", error);
+        res.status(500).json({ message: 'Failed to update group.' });
+    }
+});
+
+app.post('/api/groups/:groupId/dp', checkGroupPermission('edit'), chatUpload.single('group_dp'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+    const { groupId } = req.params;
+    const fileUrl = `/uploads/${req.file.filename}`;
+    try {
+        await db.query('UPDATE `groups` SET group_dp_url = ? WHERE id = ?', [fileUrl, groupId]);
+        res.status(200).json({ message: 'Group DP updated successfully.', group_dp_url: fileUrl });
+    } catch (error) {
+        console.error("Error updating group DP:", error);
+        res.status(500).json({ message: 'Failed to update group DP.' });
+    }
+});
+
+app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, res) => {
+    const { groupId } = req.params;
+    const connection = await db.getConnection();
+    try {
+        await connection.beginTransaction();
+        await connection.query('DELETE FROM `groups` WHERE id = ?', [groupId]);
+        await connection.commit();
+        res.json({ message: 'Group deleted successfully.' });
+    } catch (error) {
+        await connection.rollback();
+        console.error("Error deleting group:", error);
+        res.status(500).json({ message: 'Failed to delete group.' });
+    } finally {
+        connection.release();
+    }
+});
+
+// --- 4. API Routes for Chat Messages ---
+
+app.get('/api/groups/:groupId/history', async (req, res) => {
+    try {
+        const { groupId } = req.params;
+        const userId = req.user.id;
+
+        const query = `
+            SELECT
+                m.id, m.message_text, DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') as timestamp, m.user_id, m.group_id, m.message_type, 
+                m.file_url, m.file_size, m.file_mime_type, m.is_edited, m.is_deleted, m.deleted_by, m.is_pinned,
+                m.file_name,
+                m.reply_to_message_id,
+                u.full_name, u.role, u.class_group, p.profile_image_url, p.roll_no,
+                reply_m.message_text as reply_text, reply_m.message_type as reply_type, reply_u.full_name as reply_sender_name
+            FROM group_chat_messages m JOIN users u ON m.user_id = u.id
+            LEFT JOIN user_profiles p ON m.user_id = p.user_id
+            LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+            LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+            WHERE m.group_id = ? ORDER BY m.timestamp ASC LIMIT 100;`;
+        
+        const [messages] = await db.query(query, [groupId]);
+
+        const [[lastSeenData]] = await db.query(
+            'SELECT last_seen_timestamp FROM group_last_seen WHERE group_id = ? AND user_id = ?', 
+            [groupId, userId]
+        );
+
+        res.json({
+            messages,
+            lastSeen: lastSeenData ? lastSeenData.last_seen_timestamp : null
+        });
+
+    } catch (error) {
+        console.error("Error fetching chat history:", error);
+        res.status(500).json({ message: "Error fetching chat history." });
+    }
+});
+
+app.post('/api/groups/media', chatUpload.single('media'), (req, res) => {
+    if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
+    res.status(201).json({ 
+        fileUrl: `/uploads/${req.file.filename}`,
+        fileSize: req.file.size,
+        fileMimeType: req.file.mimetype
+    });
+});
+
+// --- 5. Real-Time Socket.IO Logic (Unified) ---
+
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.id}`);
+
+    socket.on('joinGroup', (data) => {
+        if (data.groupId) {
+            socket.join(`group-${data.groupId}`);
+        }
+    });
+
+    socket.on('sendMessage', async (data) => {
+        const { userId, groupId, messageType, messageText, fileUrl, fileName, fileSize, fileMimeType, replyToMessageId, clientMessageId } = data;
+        if (!userId || !groupId || !messageType || (messageType === 'text' && !messageText?.trim()) || (messageType !== 'text' && !fileUrl)) return;
+
+        const roomName = `group-${groupId}`;
+        const connection = await db.getConnection();
+        try {
+            await connection.beginTransaction();
+            const [result] = await connection.query(
+                'INSERT INTO group_chat_messages (user_id, group_id, message_type, message_text, file_url, file_name, file_size, file_mime_type, reply_to_message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [userId, groupId, messageType, messageText || null, fileUrl || null, fileName || null, fileSize || null, fileMimeType || null, replyToMessageId || null]
+            );
+            const newMessageId = result.insertId;
+            
+            const [[broadcastMessage]] = await connection.query(`
+                SELECT m.id, m.message_text, DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') as timestamp, m.user_id, m.group_id, m.message_type, 
+                m.file_url, m.file_size, m.file_mime_type, m.is_edited, m.is_deleted, m.deleted_by, m.is_pinned,
+                m.file_name,
+                m.reply_to_message_id, u.full_name, u.role, u.class_group, p.profile_image_url, p.roll_no,
+                reply_m.message_text as reply_text, reply_m.message_type as reply_type, reply_u.full_name as reply_sender_name
+                FROM group_chat_messages m JOIN users u ON m.user_id = u.id LEFT JOIN user_profiles p ON m.user_id = p.user_id
+                LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+                LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+                WHERE m.id = ?`, [newMessageId]);
+            await connection.commit();
+            
+            const finalMessage = { ...broadcastMessage, clientMessageId: clientMessageId || null };
+
+            io.to(roomName).emit('newMessage', finalMessage);
+            io.emit('updateGroupList', { groupId: groupId });
+
+        } catch (error) {
+            await connection.rollback();
+            console.error('Critical Error: Failed to save message.', error);
+        } finally {
+            connection.release();
+        }
+    });
+
+    socket.on('deleteMessage', async (data) => {
+        const { messageId, userId, groupId } = data;
+        if (!messageId || !userId || !groupId) return;
+        
+        const roomName = `group-${groupId}`;
+        const connection = await db.getConnection();
+        try {
+            const [[message]] = await connection.query('SELECT user_id FROM group_chat_messages WHERE id = ?', [messageId]);
+            if (!message) return;
+
+            const [[user]] = await connection.query('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
+            const isSystemAdmin = (user.role === 'Super Admin' || user.role === 'Developer');
+            const [[perm]] = await connection.query(`
+                SELECT p.can_delete FROM permissions p JOIN roles r ON p.role_id = r.id
+                WHERE r.role_name = ? AND r.institutionId = ? AND p.module_name = 'GroupChat'
+            `, [user.role, user.institutionId]);
+            
+            const hasDeletePower = isSystemAdmin || (perm && perm.can_delete);
+
+            if (message.user_id !== userId && !hasDeletePower) {
+                return;
+            }
+
+            await connection.query('UPDATE group_chat_messages SET is_deleted = TRUE, deleted_by = ?, message_text = NULL, file_url = NULL, file_name = NULL, file_size = NULL, file_mime_type = NULL WHERE id = ?', [userId, messageId]);
+            
+            io.to(roomName).emit('messageDeleted', { messageId, deletedBy: userId });
+
+        } catch (error) {
+            console.error(`Critical Error: Failed to soft-delete message ${messageId}.`, error);
+        } finally {
+            connection.release();
+        }
+    });
+
+    socket.on('editMessage', async (data) => {
+        const { messageId, newText, userId, groupId } = data;
+        if (!messageId || !newText || !userId || !groupId) return;
+        const roomName = `group-${groupId}`;
+        const connection = await db.getConnection();
+        try {
+            const [[message]] = await connection.query('SELECT user_id FROM group_chat_messages WHERE id = ?', [messageId]);
+            if (!message || message.user_id !== userId) return;
+
+            await connection.query('UPDATE group_chat_messages SET message_text = ?, is_edited = TRUE WHERE id = ?', [newText, messageId]);
+            
+            const [[updatedMessage]] = await connection.query(`
+                SELECT m.id, m.message_text, DATE_FORMAT(m.timestamp, '%Y-%m-%dT%H:%i:%s') as timestamp, m.user_id, m.group_id, m.message_type, 
+                m.file_url, m.file_size, m.file_mime_type, m.is_edited, m.is_deleted, m.deleted_by, m.is_pinned,
+                m.file_name,
+                m.reply_to_message_id, u.full_name, u.role, u.class_group, p.profile_image_url, p.roll_no,
+                reply_m.message_text as reply_text, reply_m.message_type as reply_type, reply_u.full_name as reply_sender_name
+                FROM group_chat_messages m JOIN users u ON m.user_id = u.id LEFT JOIN user_profiles p ON m.user_id = p.user_id
+                LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
+                LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
+                WHERE m.id = ?`, [messageId]);
+            io.to(roomName).emit('messageEdited', updatedMessage);
+
+            const [[lastMsgCheck]] = await connection.query('SELECT id FROM group_chat_messages WHERE group_id = ? ORDER BY timestamp DESC LIMIT 1', [groupId]);
+            if (lastMsgCheck && lastMsgCheck.id === parseInt(messageId, 10)) {
+                io.emit('updateGroupList', { groupId: groupId });
+            }
+        } catch (error) {
+            console.error(`Critical Error: Failed to edit message ${messageId}.`, error);
+        } finally {
+            connection.release();
+        }
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.id}`);
+    });
+});
 
 // =====================================================================
 const PORT = process.env.PORT || 3001;
