@@ -4370,7 +4370,7 @@ app.get('/api/groups', async (req, res) => {
              WHERE g.institutionId = ?
                AND (gm.user_id IS NOT NULL OR ?)
              ORDER BY COALESCE(lm.timestamp, g.created_at) DESC
-        `, [userId, userId, userId, instId, isSystemAdmin ? 1 : 0]);
+    `, [parseInt(userId, 10), parseInt(userId, 10), parseInt(userId, 10), parseInt(instId, 10), isSystemAdmin ? 1 : 0]);
 
         res.json(groups);
     } catch (error) {
@@ -4403,10 +4403,10 @@ app.get('/api/groups/:groupId/details', async (req, res) => {
         if (grp.length === 0) return res.status(404).json({ message: 'Group not found.' });
 
         if (!isSystemAdmin) {
-            const [memberCheck] = await db.execute(
-                'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
-                [groupId, userId]
-            );
+           const [memberCheck] = await db.execute(
+        'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
+        [parseInt(groupId, 10), parseInt(userId, 10)]
+    );
             if (memberCheck.length === 0) {
                 return res.status(403).json({ message: 'Access denied.' });
             }
@@ -4429,11 +4429,11 @@ app.post('/api/groups/:groupId/seen', async (req, res) => {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
-        await db.execute(`
+    await db.execute(`
             INSERT INTO group_last_seen (group_id, user_id, last_seen_timestamp)
             VALUES (?, ?, NOW())
             ON DUPLICATE KEY UPDATE last_seen_timestamp = NOW()
-        `, [groupId, userId]);
+        `, [parseInt(groupId, 10), parseInt(userId, 10)]);
         res.sendStatus(200);
     } catch (error) {
         console.error('Error marking group as seen:', error);
@@ -4508,7 +4508,8 @@ app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, r
 // GET /api/groups/:groupId/history?userId=xxx&page=1&limit=20
 app.get('/api/groups/:groupId/history', async (req, res) => {
     const { groupId } = req.params;
-    const { userId, page = 1, limit = 20 } = req.query;
+ const { userId, page = 1, limit = 20 } = req.query;
+const groupIdInt = parseInt(groupId, 10);
     if (!userId) return res.status(400).json({ error: 'userId is required' });
 
     try {
@@ -4520,10 +4521,10 @@ app.get('/api/groups/:groupId/history', async (req, res) => {
         const isSystemAdmin = (users[0].role === 'Super Admin' || users[0].role === 'Developer');
 
         if (!isSystemAdmin) {
-            const [memberCheck] = await db.execute(
-                'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
-                [groupId, userId]
-            );
+           const [memberCheck] = await db.execute(
+        'SELECT group_id FROM group_members WHERE group_id = ? AND user_id = ?',
+        [groupIdInt, parseInt(userId, 10)]
+    );
             if (memberCheck.length === 0) {
                 return res.status(403).json({ message: 'Access denied.' });
             }
@@ -4562,7 +4563,7 @@ app.get('/api/groups/:groupId/history', async (req, res) => {
              WHERE m.group_id = ?
              ORDER BY m.timestamp ASC
              LIMIT ? OFFSET ?
-        `, [groupId, parseInt(limit, 10), offset]);
+      `, [parseInt(groupId, 10), parseInt(limit, 10), offset]);
 
         const [lastSeen] = await db.execute(
             'SELECT last_seen_timestamp FROM group_last_seen WHERE group_id = ? AND user_id = ?',

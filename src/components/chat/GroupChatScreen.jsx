@@ -159,8 +159,8 @@ const markAsSeen = useCallback(async () => {
 
       if (pageNum === 1) { setLastSeenTime(fetchedLastSeen); markAsSeen(); }
 
-    } catch (error) {
-      if (error.response && (error.response.status === 404 || error.response.status === 400)) { if (onBack) onBack(); }
+   } catch (error) {
+      if (error.response && (error.response.status === 404 || error.response.status === 400 || error.response.status === 403)) { if (onBack) onBack(); }
     } finally {
       setLoading(false);
       setIsFetchingMore(false);
@@ -175,8 +175,8 @@ const markAsSeen = useCallback(async () => {
     
     socketRef.current.on("groupDeleted", (deletedGroupId) => { if (deletedGroupId === group.id || parseInt(deletedGroupId) === parseInt(group.id)) { if (onBack) onBack(); } });
 
-    socketRef.current.on("newMessage", (msg) => {
-      if (msg.group_id === group.id) {
+   socketRef.current.on("newMessage", (msg) => {
+      if (String(msg.group_id) === String(group.id)) {
         setMessages(prev => {
           const idx = prev.findIndex(m => m.clientMessageId === msg.clientMessageId);
           if (idx !== -1) { const newMsgs = [...prev]; newMsgs[idx] = msg; return newMsgs; }
