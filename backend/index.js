@@ -4170,36 +4170,36 @@ app.get('/api/groups/options', async (req, res) => {
     try {
         const userId = req.user.id;
         const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
+        const instId = user.institutionId;
 
-        // 1. Fetch staff roles natively
+        // 1. Fetch from the specific `roles` table
         const roleQuery = `
-            SELECT DISTINCT role 
-            FROM users 
+            SELECT DISTINCT role_name 
+            FROM roles 
             WHERE institutionId = ? 
-              AND LOWER(role) != 'student' 
-              AND role IS NOT NULL 
-              AND role != ''
-            ORDER BY role ASC;
+              AND LOWER(role_name) != 'student' 
+            ORDER BY role_name ASC;
         `;
-        const [roles] = await db.query(roleQuery, [user.institutionId]);
+        const [roles] = await db.query(roleQuery, [instId]);
 
-        // 2. Fetch classes by joining the classes table
+        // 2. Fetch from the specific `classes` table
         const classQuery = `
-            SELECT DISTINCT c.class_name, u.section 
-            FROM users u
-            JOIN classes c ON u.class_id = c.id
-            WHERE u.institutionId = ? 
-              AND LOWER(u.role) = 'student'
-            ORDER BY c.class_name ASC, u.section ASC;
+            SELECT className, section 
+            FROM classes 
+            WHERE institutionId = ? 
+            ORDER BY className ASC, section ASC;
         `;
-        const [classes] = await db.query(classQuery, [user.institutionId]);
+        const [classes] = await db.query(classQuery, [instId]);
 
-        // Map data cleanly for the frontend
-        const roleList = roles.map(r => r.role);
+        // Format the roles
+        const roleList = roles.map(r => r.role_name);
         
-        // This formats it perfectly as "Class 10 - A" or just "Class 10" if no section
+        // Format the classes: If section exists, join with " - ". Otherwise just class.
         const classList = classes.map(c => {
-            return c.section ? `${c.class_name} - ${c.section}` : c.class_name;
+            if (c.section && c.section.trim() !== '') {
+                return `${c.className} - ${c.section}`;
+            }
+            return c.className;
         });
 
         res.json({ classes: classList, roles: roleList });
@@ -4239,11 +4239,11 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                 queryParams.push(instId); 
             }
             else { 
-                // This checks if the category matches the role OR the concatenated Class - Section
+                // We ask SQL to match the exact role OR dynamically reconstruct the Class string
                 whereClauses.push(`(
                     u.role = ? 
-                    OR CONCAT_WS(' - ', c.class_name, u.section) = ? 
-                    OR c.class_name = ?
+                    OR (c.section IS NOT NULL AND c.section != '' AND CONCAT(c.className, ' - ', c.section) = ?)
+                    OR ((c.section IS NULL OR c.section = '') AND c.className = ?)
                 ) AND u.institutionId = ?`);
                 
                 queryParams.push(category, category, category, instId); 
@@ -4252,7 +4252,7 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 
         const finalWhereClause = whereClauses.includes("u.institutionId = ?") ? "u.institutionId = ?" : whereClauses.join(' OR ');
         
-        // We JOIN classes here so we can find the users based on the string "Class 10 - A"
+        // We JOIN classes here so we can read className and section directly
         const getUsersQuery = `
             SELECT u.id 
             FROM users u
@@ -4271,6 +4271,8 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
                 [instId, name, description || null, creator.id, backgroundColor || '#e5ddd5', isReadOnly ? 1 : 0]
             );
             const groupId = groupResult.insertId;
+            
+            // Deduplicate IDs to ensure no user is added twice
             const allMemberIds = [...new Set([creator.id, ...memberIds])];
             
             if (allMemberIds.length === 0) {
