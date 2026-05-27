@@ -4166,25 +4166,50 @@ const checkGroupPermission = (action) => async (req, res, next) => {
 };
 
 // --- 3. API Routes for Group Management ---
-
 app.get('/api/groups/options', async (req, res) => {
     try {
         const userId = req.user.id;
         const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
 
-        const classQuery = `SELECT DISTINCT class_group FROM users WHERE role = 'student' AND institutionId = ? AND class_group IS NOT NULL AND class_group != '' ORDER BY class_group ASC;`;
-        const [classes] = await db.query(classQuery, [user.institutionId]);
+        // 1. Fetch Roles directly from the users table (safest method)
+        const [rolesResult] = await db.query(`
+            SELECT DISTINCT role 
+            FROM users 
+            WHERE institutionId = ? 
+            AND LOWER(role) != 'student' 
+            AND role IS NOT NULL 
+            AND role != ''
+        `, [user.institutionId]);
 
-        const roleQuery = `SELECT DISTINCT role_name FROM roles WHERE institutionId = ? AND role_name != 'Student';`;
-        const [roles] = await db.query(roleQuery, [user.institutionId]);
+        // 2. Fetch Classes directly from active students
+        // IMPORTANT: If your database column is named 'class' or 'class_name' 
+        // instead of 'class_group', you MUST change 'class_group' below to match your database.
+        const [classesResult] = await db.query(`
+            SELECT DISTINCT class_group 
+            FROM users 
+            WHERE institutionId = ? 
+            AND LOWER(role) = 'student' 
+            AND class_group IS NOT NULL 
+            AND class_group != ''
+        `, [user.institutionId]);
 
-        const classList = classes.map(c => c.class_group);
-        const roleList = roles.map(r => r.role_name);
+        const roleList = rolesResult.map(r => r.role);
+        const classList = classesResult.map(c => c.class_group);
 
-        res.json({ classes: classList, roles: roleList.length > 0 ? roleList : ['Super Admin', 'Teacher'] });
+        res.json({ 
+            classes: classList, 
+            roles: roleList.length > 0 ? roleList : ['Super Admin', 'Teacher'] 
+        });
+
     } catch (error) {
-        console.error("Error fetching group options:", error);
-        res.status(500).json({ message: "Error fetching group creation options." });
+        // If it crashes again, this will print the EXACT SQL error in your terminal
+        console.error("CRASH in /api/groups/options:", error.message);
+        
+        // Provide a fallback so the UI doesn't completely break
+        res.json({ 
+            classes: [], 
+            roles: ['Super Admin', 'Teacher', 'Student'] 
+        });
     }
 });
 

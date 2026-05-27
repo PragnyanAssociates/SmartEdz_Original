@@ -166,6 +166,7 @@ export const MODULES = [
 {
   id:'GroupChat',
   module_name:'GroupChat',
+  label:'GroupChat',
   title:'GroupChat',
   imageSource:'https://cdn-icons-png.flaticon.com/128/6576/6576146.png',
   navigateTo:'/WhatsAppLayout'
