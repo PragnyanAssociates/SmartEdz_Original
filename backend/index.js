@@ -4166,8 +4166,7 @@ const checkGroupPermission = (action) => async (req, res, next) => {
 };
 
 // --- 3. API Routes for Group Management ---
-
-app.get('/api/groups/options', verifyToken, async (req, res) => {
+app.get('/api/groups/options', async (req, res) => {
     try {
         const userId = req.user.id;
         const [[user]] = await db.query('SELECT institutionId FROM users WHERE id = ?', [userId]);
@@ -4210,8 +4209,7 @@ app.get('/api/groups/options', verifyToken, async (req, res) => {
         res.json({ classes: [], roles: [] });
     }
 });
-
-app.post('/api/groups', verifyToken, checkGroupPermission('edit'), async (req, res) => {
+app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
     try {
         const { name, description, selectedCategories, backgroundColor, isReadOnly } = req.body;
         const creator = req.user;
@@ -4297,8 +4295,7 @@ app.post('/api/groups', verifyToken, checkGroupPermission('edit'), async (req, r
         res.status(500).json({ message: "Server error while creating group." });
     }
 });
-
-app.get('/api/groups', verifyToken, async (req, res) => {
+app.get('/api/groups', async (req, res) => {
     try {
         const userId = req.user.id;
         const [[userRecord]] = await db.query('SELECT role, institutionId FROM users WHERE id = ?', [userId]);
@@ -4329,7 +4326,7 @@ app.get('/api/groups', verifyToken, async (req, res) => {
     }
 });
 
-app.get('/api/groups/:groupId/details', verifyToken, async (req, res) => {
+app.get('/api/groups/:groupId/details', async (req, res) => {
     try {
         const { groupId } = req.params;
         const userId = req.user.id;
@@ -4355,7 +4352,7 @@ app.get('/api/groups/:groupId/details', verifyToken, async (req, res) => {
     }
 });
 
-app.post('/api/groups/:groupId/seen', verifyToken, async (req, res) => {
+app.post('/api/groups/:groupId/seen', async (req, res) => {
     const { groupId } = req.params;
     const userId = req.user.id;
     try {
@@ -4372,7 +4369,7 @@ app.post('/api/groups/:groupId/seen', verifyToken, async (req, res) => {
     }
 });
 
-app.put('/api/groups/:groupId', verifyToken, checkGroupPermission('edit'), async (req, res) => {
+app.put('/api/groups/:groupId', checkGroupPermission('edit'), async (req, res) => {
     const { name, backgroundColor, isReadOnly } = req.body;
     const { groupId } = req.params;
     try {
@@ -4385,7 +4382,7 @@ app.put('/api/groups/:groupId', verifyToken, checkGroupPermission('edit'), async
     }
 });
 
-app.post('/api/groups/:groupId/dp', verifyToken, checkGroupPermission('edit'), chatUpload.single('group_dp'), async (req, res) => {
+app.post('/api/groups/:groupId/dp', checkGroupPermission('edit'), chatUpload.single('group_dp'), async (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
     const { groupId } = req.params;
     const fileUrl = `/uploads/${req.file.filename}`;
@@ -4398,7 +4395,7 @@ app.post('/api/groups/:groupId/dp', verifyToken, checkGroupPermission('edit'), c
     }
 });
 
-app.delete('/api/groups/:groupId', verifyToken, checkGroupPermission('delete'), async (req, res) => {
+app.delete('/api/groups/:groupId', checkGroupPermission('delete'), async (req, res) => {
     const { groupId } = req.params;
     const connection = await db.getConnection();
     try {
@@ -4417,7 +4414,7 @@ app.delete('/api/groups/:groupId', verifyToken, checkGroupPermission('delete'), 
 
 // --- 4. API Routes for Chat Messages ---
 
-app.get('/api/groups/:groupId/history', verifyToken, async (req, res) => {
+app.get('/api/groups/:groupId/history', async (req, res) => {
     try {
         const { groupId } = req.params;
         const userId = req.user.id;
@@ -4454,7 +4451,7 @@ app.get('/api/groups/:groupId/history', verifyToken, async (req, res) => {
     }
 });
 
-app.post('/api/groups/media', verifyToken, chatUpload.single('media'), (req, res) => {
+app.post('/api/groups/media', chatUpload.single('media'), (req, res) => {
     if (!req.file) return res.status(400).json({ message: 'No file uploaded.' });
     res.status(201).json({ 
         fileUrl: `/uploads/${req.file.filename}`,
@@ -4500,10 +4497,10 @@ io.on('connection', (socket) => {
                 WHERE m.id = ?`, [newMessageId]);
             await connection.commit();
             
-            const finalMessage = {
-                ...broadcastMessage,
-                clientMessageId: clientMessageId || null
-            };
+const finalMessage = {
+    ...broadcastMessage,
+    clientMessageId: clientMessageId || null
+};
 
             io.to(roomName).emit('newMessage', finalMessage);
             io.emit('updateGroupList', { groupId: groupId });
