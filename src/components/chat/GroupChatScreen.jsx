@@ -129,14 +129,20 @@ const markAsSeen = useCallback(async () => {
     fetchGroupDetails();
   }, [group.id]);
 
-  const fetchHistory = useCallback(async (pageNum = 1) => {
+const fetchHistory = useCallback(async (pageNum = 1) => {
     if (pageNum === 1) setLoading(true);
     else setIsFetchingMore(true);
 
     try {
-     const response = await apiClient.get(`/groups/${group.id}/history`, {
-    params: { page: pageNum, limit: MESSAGES_PER_PAGE, userId: user.id }
-});
+      const response = await apiClient.get(`/groups/${group.id}/history`, {
+        params: { page: pageNum, limit: MESSAGES_PER_PAGE, userId: user.id }
+      });
+      
+      console.log('[HISTORY] group.id:', group.id);
+      console.log('[HISTORY] user.id:', user.id);
+      console.log('[HISTORY] raw response:', response.data);
+      console.log('[HISTORY] messages:', response.data.messages);
+      
       const fetchedMessages = response.data.messages || response.data || [];
       const fetchedLastSeen = response.data.lastSeen || null;
 

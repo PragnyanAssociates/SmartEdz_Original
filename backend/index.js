@@ -4532,6 +4532,10 @@ const groupIdInt = parseInt(groupId, 10);
 
         const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
+    const limitNum = parseInt(limit, 10);
+        const offsetNum = parseInt(offset, 10);
+        const groupIdNum = parseInt(groupId, 10);
+
         const [messages] = await db.execute(`
             SELECT
                 m.id,
@@ -4560,10 +4564,10 @@ const groupIdInt = parseInt(groupId, 10);
               JOIN users u ON m.user_id = u.id
               LEFT JOIN group_chat_messages reply_m ON m.reply_to_message_id = reply_m.id
               LEFT JOIN users reply_u ON reply_m.user_id = reply_u.id
-             WHERE m.group_id = ?
+             WHERE m.group_id = ${groupIdNum}
              ORDER BY m.timestamp ASC
-             LIMIT ? OFFSET ?
-      `, [parseInt(groupId, 10), parseInt(limit, 10), offset]);
+             LIMIT ${limitNum} OFFSET ${offsetNum}
+        `);
 
         const [lastSeen] = await db.execute(
             'SELECT last_seen_timestamp FROM group_last_seen WHERE group_id = ? AND user_id = ?',
