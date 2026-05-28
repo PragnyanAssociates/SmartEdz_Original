@@ -13,9 +13,14 @@ export default function PromotionTab({ data, fetchData }) {
   const [selectedStudents, setSelectedStudents] = useState([]);
   const [search, setSearch]                     = useState('');
 
-  // Show only students (any role containing "student", case-insensitive)
+  // Show only ACTIVE students — students who are role-student AND not
+  // already passed out. Alumni (status 'alumni') have left the school
+  // and must never appear in the promotion list.
   const allStudents = useMemo(
-    () => data.users.filter(u => (u.role || '').toLowerCase().includes('student')),
+    () => data.users.filter(u =>
+      (u.role || '').toLowerCase().includes('student') &&
+      (u.status || '').toLowerCase() !== 'alumni'
+    ),
     [data.users]
   );
 

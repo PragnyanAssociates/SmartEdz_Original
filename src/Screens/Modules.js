@@ -178,9 +178,15 @@ export const MODULES = [
   title:'Alumni',
   imageSource:'https://cdn-icons-png.flaticon.com/128/4696/4696859.png',
   navigateTo:'/Alumni'
+},
+{
+  id:'LessonPlan',
+  module_name:'LessonPlan',
+  label:'LessonPlan',
+  title:'LessonPlan',
+  imageSource:'https://cdn-icons-png.flaticon.com/128/5341/5341025.png',
+  navigateTo:'/LessonPlan'
 }
-
-
 
 ];
 

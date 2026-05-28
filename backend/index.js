@@ -62,7 +62,8 @@ const DEFAULT_MODULES = [
     'StudyMaterials',
     'Syllabus',
     'GroupChat',
-    'Alumni'
+    'Alumni',
+    'LessonPlan'
     
 ];
 
@@ -5058,6 +5059,39 @@ app.get('/api/admin/alumni/candidates/:instId/:classId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+
+
+// =====================================================================
+// === 14. LESSON PLAN MODULE ==========================================
+// =====================================================================
+
+app.get('/api/admin/lesson-plans/:instId', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT id, title, image_data, created_at FROM lesson_plans WHERE institutionId = ? ORDER BY created_at DESC',
+            [req.params.instId]
+        );
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/admin/lesson-plans', async (req, res) => {
+    const { institutionId, image_data, title } = req.body;
+    try {
+        await db.execute(
+            'INSERT INTO lesson_plans (institutionId, image_data, title) VALUES (?, ?, ?)',
+            [institutionId, image_data, title || 'Untitled Plan']
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/api/admin/lesson-plans/:id', async (req, res) => {
+    try {
+        await db.execute('DELETE FROM lesson_plans WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 
 

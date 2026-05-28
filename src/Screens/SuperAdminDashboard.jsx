@@ -20,6 +20,7 @@ import StudyMaterialsScreen from '../components/study-materials/StudyMaterialsSc
 import Syllabus from '../components/Syllabus/Syllabus';
 import WhatsAppLayout from '../components/chat/WhatsAppLayout';
 import Alumni from '../components/Alumni/Alumni';
+import LessonPlan from '../components/LessonPlan/LessonPlan';
 
 
 import Profile from './Profile';
@@ -87,6 +88,7 @@ function DashboardShell() {
       case 'Syllabus':          return <Syllabus/>;
       case 'GroupChat':         return <WhatsAppLayout/>;
       case 'Alumni':            return <Alumni/>;
+      case 'LessonPlan':        return <LessonPlan/>;
     
         return (
           <div className="h-full flex items-center justify-center flex-col text-center opacity-40">

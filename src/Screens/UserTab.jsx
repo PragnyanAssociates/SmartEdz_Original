@@ -18,13 +18,23 @@ export default function UserTab({ data, fetchData, user }) {
   };
   const [form, setForm] = useState(emptyForm);
 
+  // ------------------------------------------------------------------
+  // Active roster only. Students promoted to Alumni have
+  // status === 'alumni' and live in the Alumni module — they are
+  // hidden from the User Registry everywhere (list + counts).
+  // ------------------------------------------------------------------
+  const activeUsers = useMemo(
+    () => data.users.filter(u => (u.status || '').toLowerCase() !== 'alumni'),
+    [data.users]
+  );
+
   const roleTabs = useMemo(() => {
     const counts = {};
-    data.users.forEach(u => { counts[u.role] = (counts[u.role] || 0) + 1; });
+    activeUsers.forEach(u => { counts[u.role] = (counts[u.role] || 0) + 1; });
     const knownRoles = data.roles.map(r => r.role_name);
     const merged = Array.from(new Set([...knownRoles, ...Object.keys(counts)]));
     return merged.map(r => ({ name: r, count: counts[r] || 0 }));
-  }, [data.users, data.roles]);
+  }, [activeUsers, data.roles]);
 
   // ------------------------------------------------------------------
   // Class filter: count students per class. Only meaningful when the
@@ -33,7 +43,7 @@ export default function UserTab({ data, fetchData, user }) {
   // ------------------------------------------------------------------
   const classFilters = useMemo(() => {
     const counts = {};
-    data.users.forEach(u => {
+    activeUsers.forEach(u => {
       if (u.class_id) counts[u.class_id] = (counts[u.class_id] || 0) + 1;
     });
     return (data.classes || []).map(c => ({
@@ -41,7 +51,7 @@ export default function UserTab({ data, fetchData, user }) {
       label: `${c.className}${c.section ? ` - ${c.section}` : ''}`,
       count: counts[c.id] || 0
     }));
-  }, [data.users, data.classes]);
+  }, [activeUsers, data.classes]);
 
   // Show the class filter only when it makes sense — i.e. the current
   // role view actually contains class-assigned users (students).
@@ -52,7 +62,7 @@ export default function UserTab({ data, fetchData, user }) {
   }, [classFilters, activeRoleTab]);
 
   const filteredUsers = useMemo(() => {
-    let list = data.users;
+    let list = activeUsers;
     if (activeRoleTab !== 'all') list = list.filter(u => u.role === activeRoleTab);
     if (activeClass !== 'all') {
       list = list.filter(u => String(u.class_id) === String(activeClass));
@@ -65,7 +75,7 @@ export default function UserTab({ data, fetchData, user }) {
         (u.username || '').toLowerCase().includes(q));
     }
     return list;
-  }, [data.users, activeRoleTab, activeClass, search]);
+  }, [activeUsers, activeRoleTab, activeClass, search]);
 
   const isoDate = (v) => {
     if (!v) return '';
@@ -191,7 +201,7 @@ export default function UserTab({ data, fetchData, user }) {
           className={`px-4 py-2 rounded-full text-xs font-black uppercase tracking-wider transition-all ${
             activeRoleTab === 'all' ? 'bg-slate-900 text-white' : 'bg-white text-slate-500 border border-slate-100 hover:border-slate-300'
           }`}>
-          All <span className="ml-2 opacity-60">{data.users.length}</span>
+          All <span className="ml-2 opacity-60">{activeUsers.length}</span>
         </button>
         {roleTabs.map(t => (
           <button key={t.name} onClick={() => handleRoleTab(t.name)}
@@ -361,7 +371,7 @@ export default function UserTab({ data, fetchData, user }) {
                   <Field label="Username" icon={AtSign} value={form.username} onChange={v => setForm({ ...form, username: v })} placeholder="e.g. sagar" />
                   <Field label="Password" required value={form.password} onChange={v => setForm({ ...form, password: v })} />
                   <Field label="Status" type="select" value={form.status} onChange={v => setForm({ ...form, status: v })}
-                    options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }]} />
+                    options={[{ value: 'active', label: 'Active' }, { value: 'inactive', label: 'Inactive' }, { value: 'alumni', label: 'Alumni' }]} />
                 </Grid>
               </Section>
 
