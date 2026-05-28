@@ -4327,7 +4327,7 @@ app.post('/api/groups', checkGroupPermission('edit'), async (req, res) => {
 
 // --- 5. List Groups for a User ---
 // GET /api/groups?userId=xxx&instId=xxx
-app.get('/api/groups', async (req, res) => {
+aapp.get('/api/groups', async (req, res) => {
     const { userId, instId } = req.query;
     if (!userId || !instId) return res.status(400).json({ error: 'userId and instId are required' });
 
@@ -4350,7 +4350,18 @@ app.get('/api/groups', async (req, res) => {
                 g.background_color,
                 g.status,
                 g.is_read_only,
-                lm.message_text AS last_message_text,
+                
+                /* THE FIX: Generate text for media files instead of returning NULL */
+                COALESCE(
+                    lm.message_text, 
+                    CASE 
+                        WHEN lm.message_type = 'image' THEN '📷 Photo'
+                        WHEN lm.message_type = 'video' THEN '🎥 Video'
+                        WHEN lm.message_type = 'file' THEN CONCAT('📁 ', COALESCE(lm.file_name, 'Document'))
+                        ELSE NULL 
+                    END
+                ) AS last_message_text,
+                
                 DATE_FORMAT(lm.timestamp, '%Y-%m-%dT%H:%i:%s') AS last_message_timestamp,
                 (
                     SELECT COUNT(*)
@@ -4363,14 +4374,15 @@ app.get('/api/groups', async (req, res) => {
               LEFT JOIN group_members gm ON g.id = gm.group_id AND gm.user_id = ?
               LEFT JOIN group_last_seen gls ON g.id = gls.group_id AND gls.user_id = ?
               LEFT JOIN (
-                  SELECT group_id, message_text, timestamp,
+                  /* THE FIX: Added message_type and file_name to the SELECT here */
+                  SELECT group_id, message_text, message_type, file_name, timestamp,
                          ROW_NUMBER() OVER (PARTITION BY group_id ORDER BY timestamp DESC) AS rn
                     FROM group_chat_messages
               ) lm ON g.id = lm.group_id AND lm.rn = 1
              WHERE g.institutionId = ?
                AND (gm.user_id IS NOT NULL OR ?)
              ORDER BY COALESCE(lm.timestamp, g.created_at) DESC
-    `, [parseInt(userId, 10), parseInt(userId, 10), parseInt(userId, 10), parseInt(instId, 10), isSystemAdmin ? 1 : 0]);
+        `, [parseInt(userId, 10), parseInt(userId, 10), parseInt(userId, 10), parseInt(instId, 10), isSystemAdmin ? 1 : 0]);
 
         res.json(groups);
     } catch (error) {

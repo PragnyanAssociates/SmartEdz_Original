@@ -87,7 +87,6 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
   const prevScrollHeightRef = useRef(0);
   const isPaginationLoadRef = useRef(false);
 
-  // Unified Permissions Check
   const hasEditRights = isAllAccess || canEdit || (user?.id === group.created_by);
   const hasGlobalDelete = isAllAccess || canDelete;
   const isReadOnlyMode = group.is_read_only === 1 || group.is_read_only === true;
@@ -106,31 +105,31 @@ const GroupChatScreen = ({ providedGroup, onBack, isEmbedded = false, onOpenSett
     }
   }, [providedGroup]);
 
-const markAsSeen = useCallback(async () => {
+  const markAsSeen = useCallback(async () => {
     if (!group?.id || !user?.id) return;
     try {
         await apiClient.post(`/groups/${group.id}/seen`, { userId: user.id });
     } catch (error) {}
-}, [group.id, user?.id]);
+  }, [group.id, user?.id]);
 
   useEffect(() => {
     if (!group?.id) return;
-   const fetchGroupDetails = async () => {
-    if (!user?.id) return;
-    try {
-        const response = await apiClient.get(`/groups/${group.id}/details`, {
-            params: { userId: user.id }
-        });
-        if (response.data) {
-            const fetchedDetails = response.data.group || response.data;
-            setGroup(prev => ({ ...prev, ...fetchedDetails }));
-        }
-    } catch (error) {}
-};
+    const fetchGroupDetails = async () => {
+        if (!user?.id) return;
+        try {
+            const response = await apiClient.get(`/groups/${group.id}/details`, {
+                params: { userId: user.id }
+            });
+            if (response.data) {
+                const fetchedDetails = response.data.group || response.data;
+                setGroup(prev => ({ ...prev, ...fetchedDetails }));
+            }
+        } catch (error) {}
+    };
     fetchGroupDetails();
-  }, [group.id]);
+  }, [group.id, user?.id]);
 
-const fetchHistory = useCallback(async (pageNum = 1) => {
+  const fetchHistory = useCallback(async (pageNum = 1) => {
     if (pageNum === 1) setLoading(true);
     else setIsFetchingMore(true);
 
@@ -138,11 +137,6 @@ const fetchHistory = useCallback(async (pageNum = 1) => {
       const response = await apiClient.get(`/groups/${group.id}/history`, {
         params: { page: pageNum, limit: MESSAGES_PER_PAGE, userId: user.id }
       });
-      
-      console.log('[HISTORY] group.id:', group.id);
-      console.log('[HISTORY] user.id:', user.id);
-      console.log('[HISTORY] raw response:', response.data);
-      console.log('[HISTORY] messages:', response.data.messages);
       
       const fetchedMessages = response.data.messages || response.data || [];
       const fetchedLastSeen = response.data.lastSeen || null;
@@ -172,7 +166,7 @@ const fetchHistory = useCallback(async (pageNum = 1) => {
       setLoading(false);
       setIsFetchingMore(false);
     }
-  }, [group.id, markAsSeen, onBack]);
+  }, [group.id, markAsSeen, onBack, user?.id]);
 
   useEffect(() => {
     if (group?.id) { fetchHistory(1); }
@@ -182,7 +176,7 @@ const fetchHistory = useCallback(async (pageNum = 1) => {
     
     socketRef.current.on("groupDeleted", (deletedGroupId) => { if (deletedGroupId === group.id || parseInt(deletedGroupId) === parseInt(group.id)) { if (onBack) onBack(); } });
 
-   socketRef.current.on("newMessage", (msg) => {
+    socketRef.current.on("newMessage", (msg) => {
       if (String(msg.group_id) === String(group.id)) {
         setMessages(prev => {
           const idx = prev.findIndex(m => m.clientMessageId === msg.clientMessageId);
@@ -260,9 +254,10 @@ const fetchHistory = useCallback(async (pageNum = 1) => {
     if (!user || !canSendMessages) return;
     const clientMessageId = uuidv4();
     setMessages(prev => [...prev, { id: clientMessageId, clientMessageId: clientMessageId, user_id: user.id, full_name: user.fullName, profile_image_url: user.profileImageUrl, group_id: group.id, message_type: type, file_url: null, localUri: URL.createObjectURL(file), file_name: file.name, file_size: file.size, message_text: null, timestamp: getLocalISOString(), status: 'uploading', progress: 0 }]);
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });const formData = new FormData();
-formData.append('media', file);
-formData.append('userId', user.id); 
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const formData = new FormData();
+    formData.append('media', file);
+    formData.append('userId', user.id); 
     try {
       const res = await apiClient.post('/groups/media', formData, { headers: { 'Content-Type': 'multipart/form-data' }, onUploadProgress: (pe) => { if (pe.total) setMessages(prev => prev.map(msg => msg.clientMessageId === clientMessageId ? { ...msg, progress: Math.round((pe.loaded * 100) / pe.total) } : msg)); } });
       sendMessage(type, null, res.data.fileUrl, clientMessageId, file.name, res.data.fileSize, res.data.fileMimeType);
@@ -271,8 +266,6 @@ formData.append('userId', user.id);
 
   const handlePickImageVideo = (e) => { const file = e.target.files[0]; if (!file) return; const type = file.type.startsWith("video") ? "video" : "image"; uploadFile(file, type); e.target.value = ""; setAttachmentModalVisible(false); };
   const handlePickDocument = (e) => { const file = e.target.files[0]; if (!file) return; uploadFile(file, 'file'); e.target.value = ""; setAttachmentModalVisible(false); };
-  
-  const showAttachmentMenu = () => { setAttachmentModalVisible(true); };
 
   const handleSend = () => {
     if (!newMessage.trim() || !canSendMessages) return;
@@ -366,12 +359,10 @@ formData.append('userId', user.id);
         {!isMyMessage && <img src={getProfileImageSource(item.profile_image_url)} alt="User" className="w-8 h-8 rounded-full mr-2 mt-1 bg-gray-200 flex-shrink-0" />}
         <div className={`relative max-w-[85%] sm:max-w-[65%] cursor-pointer shadow-sm ${isMyMessage ? (isImageOrVideo ? "rounded-lg" : `${THEME.myMessageBg} rounded-lg rounded-tr-none p-2 px-3`) : (isImageOrVideo ? "rounded-lg" : `${THEME.otherMessageBg} rounded-lg rounded-tl-none p-2 px-3`)} ${item.is_deleted ? 'bg-slate-50 border border-slate-200 shadow-none' : ''}`} onContextMenu={(e) => { e.preventDefault(); onLongPressMessage(item); }} onClick={() => onLongPressMessage(item)}>
           
-          {/* THE FIX: Added !! below to prevent "0" from rendering */}
           {!!item.is_pinned && !item.is_deleted && <div className="absolute -top-2 -right-2 bg-yellow-100 text-yellow-600 rounded-full p-1 shadow-sm border border-yellow-200"><Pin className="w-3 h-3" /></div>}
           
           {!isMyMessage && !isImageOrVideo && !isFile && !item.is_deleted && <div className="text-xs font-bold text-[#54656f] mb-1">{item.full_name}</div>}
           
-          {/* THE FIX: Added !! below to prevent "0" from rendering */}
           {!!item.reply_to_message_id && !isImageOrVideo && !item.is_deleted && <div className={`mb-2 p-2 rounded-md border-l-4 bg-black/5 border-[#00a884]`}><div className="text-xs font-bold text-[#00a884]">{item.reply_sender_name}</div><div className="text-xs text-gray-600 truncate">{item.reply_type === 'text' ? item.reply_text : 'Media'}</div></div>}
           
           {renderContent()}
@@ -415,20 +406,6 @@ formData.append('userId', user.id);
 
       {renderOptionsModal()} 
       
-      {/* Attachment Menu (Hidden if Read-Only) */}
-      {isAttachmentModalVisible && canSendMessages && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-96 max-w-[90%] shadow-2xl">
-            <h3 className="text-lg font-semibold text-gray-800 mb-6 text-center">Attach to chat</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <button className="flex flex-col items-center gap-2 p-4 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => document.getElementById('chat-media-upload').click()}><div className="w-14 h-14 bg-purple-100 rounded-full flex items-center justify-center"><ImageIcon className="w-7 h-7 text-purple-600" /></div><span className="text-sm font-medium text-gray-700">Photos & Videos</span></button>
-              <button className="flex flex-col items-center gap-2 p-4 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => document.getElementById('chat-document-upload').click()}><div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center"><FileText className="w-7 h-7 text-indigo-600" /></div><span className="text-sm font-medium text-gray-700">Document</span></button>
-            </div>
-            <div className="flex justify-center mt-6"><button className="px-6 py-2 text-slate-500 hover:text-slate-700 font-medium" onClick={() => setAttachmentModalVisible(false)}>Cancel</button></div>
-          </div>
-        </div>
-      )}
-      
       {/* Header */}
       <div className="h-16 bg-[#f0f2f5] border-b border-slate-200 px-4 flex items-center justify-between flex-shrink-0 z-50">
         {isEmbedded && onBack && <button onClick={onBack} className="md:hidden mr-3 p-1 rounded-full hover:bg-slate-200 text-slate-600"><MdArrowBack className="w-6 h-6" /></button>}
@@ -455,10 +432,7 @@ formData.append('userId', user.id);
           
           {isGroupMenuVisible && (
               <>
-                  {/* Invisible overlay to close the dropdown when clicking outside */}
                   <div className="fixed inset-0 z-40" onClick={() => setGroupMenuVisible(false)}></div>
-                  
-                  {/* The actual dropdown menu */}
                   <div className="absolute right-0 top-full mt-2 bg-white rounded-md shadow-xl border border-slate-200 py-1 w-48 z-50">
                       <button 
                           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-100 transition-colors text-left"
@@ -503,13 +477,46 @@ formData.append('userId', user.id);
 
       {/* Input Area (Dynamic Notice Board Logic) */}
       {canSendMessages ? (
-          <div className="bg-[#f0f2f5] px-4 py-2 flex items-center gap-2 flex-shrink-0 z-10 relative">
+          <div className="bg-[#f0f2f5] px-4 py-2 flex items-center gap-2 flex-shrink-0 z-20 relative">
             {replyingTo && <div className="absolute bottom-full left-0 right-0 bg-white/95 backdrop-blur-sm p-2 border-l-4 border-[#00a884] flex justify-between items-center shadow-sm px-4"><div className="flex-1"><div className="text-xs font-bold text-[#00a884]">{replyingTo.reply_sender_name}</div><div className="text-sm text-gray-500 truncate">{replyingTo.message_text}</div></div><button onClick={cancelReply}><X className="w-5 h-5 text-gray-500" /></button></div>}
             {editingMessage && <div className="absolute bottom-full left-0 right-0 bg-blue-50 p-2 border-l-4 border-blue-500 flex justify-between items-center px-4"><span className="text-blue-600 font-medium">Editing message...</span><button onClick={cancelEdit}><X className="w-5 h-5 text-blue-400" /></button></div>}
             
-            <button onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Smile className="w-6 h-6" /></button>
-            <button onClick={showAttachmentMenu} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Paperclip className="w-6 h-6" /></button>
-            
+            {/* THE FIX: Anchored Emoji Picker Wrapper */}
+            <div className="relative flex items-center">
+                <button onClick={() => setIsEmojiPickerOpen(!isEmojiPickerOpen)} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Smile className="w-6 h-6" /></button>
+                {isEmojiPickerOpen && (
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsEmojiPickerOpen(false)}></div>
+                        <div className="absolute bottom-full left-0 mb-4 z-50 shadow-lg rounded-lg overflow-hidden">
+                            <EmojiPicker onEmojiClick={(emojiData) => { setNewMessage((prev) => prev + emojiData.emoji); setIsEmojiPickerOpen(false); }} width={300} height={400} />
+                        </div>
+                    </>
+                )}
+            </div>
+
+            {/* THE FIX: Anchored Attachment Popup Menu */}
+            <div className="relative flex items-center">
+                <button onClick={() => setAttachmentModalVisible(!isAttachmentModalVisible)} className="p-2 text-[#54656f] hover:bg-slate-200 rounded-full"><Paperclip className="w-6 h-6" /></button>
+                
+                {isAttachmentModalVisible && (
+                    <>
+                        <div className="fixed inset-0 z-40" onClick={() => setAttachmentModalVisible(false)}></div>
+                        <div className="absolute bottom-full left-0 mb-4 z-50 bg-white rounded-2xl shadow-xl border border-slate-200 p-4 w-72">
+                            <div className="grid grid-cols-2 gap-4">
+                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-media-upload').click(); }}>
+                                    <div className="w-14 h-14 bg-purple-100 rounded-full flex items-center justify-center"><ImageIcon className="w-7 h-7 text-purple-600" /></div>
+                                    <span className="text-xs font-medium text-gray-700">Photos & Videos</span>
+                                </button>
+                                <button className="flex flex-col items-center gap-2 p-3 hover:bg-slate-50 rounded-xl transition-colors" onClick={() => { setAttachmentModalVisible(false); document.getElementById('chat-document-upload').click(); }}>
+                                    <div className="w-14 h-14 bg-indigo-100 rounded-full flex items-center justify-center"><FileText className="w-7 h-7 text-indigo-600" /></div>
+                                    <span className="text-xs font-medium text-gray-700">Document</span>
+                                </button>
+                            </div>
+                        </div>
+                    </>
+                )}
+            </div>
+
             <div className="flex-1 bg-white rounded-lg flex items-center px-4 py-2">
                 <textarea className="w-full bg-transparent outline-none text-slate-900 resize-none max-h-24 min-h-[24px]" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} onKeyPress={handleKeyPress} placeholder="Type a message" rows={1} onFocus={() => setIsEmojiPickerOpen(false)} />
             </div>
@@ -527,8 +534,6 @@ formData.append('userId', user.id);
               </div>
           </div>
       )}
-
-      {isEmojiPickerOpen && canSendMessages && <div className="absolute bottom-16 left-4 z-50 shadow-lg rounded-lg overflow-hidden"><EmojiPicker onEmojiClick={(emojiData) => { setNewMessage((prev) => prev + emojiData.emoji); setIsEmojiPickerOpen(false); }} width={300} height={400} /></div>}
     </div>
   );
 };
