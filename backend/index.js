@@ -4162,8 +4162,8 @@ app.delete('/api/admin/syllabus/keywords/:keywordId', async (req, res) => {
 
 
 
-// =====================================================================
-// === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ==========
+// ====================================================================
+// === GROUP CHAT MODULE (UNIFIED PERMISSIONS & MULTI-TENANT) ========
 // =====================================================================
 
 // --- 1. Multer Configuration for Chat Media ---
