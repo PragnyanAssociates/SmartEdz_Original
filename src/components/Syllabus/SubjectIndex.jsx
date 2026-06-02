@@ -12,8 +12,18 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 //    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
 //
-//  Pages are the PDF's REAL pages: the label says exactly what opens.
+//  Page numbers shown are the BOOK'S PRINTED numbers (printed_from/to,
+//  computed by the backend from the detected front-matter offset). The
+//  PDF still opens at exactly the right pages.
 // =====================================================================
+
+// printed label for a chapter (falls back to PDF pages if no printed map)
+function chapterLabel(ch) {
+  if (/^index$/i.test((ch.title || '').trim())) return '';
+  const from = ch.printed_from != null ? ch.printed_from : ch.page_from;
+  const to   = ch.printed_to   != null ? ch.printed_to   : ch.page_to;
+  return pageLabel(from, to);
+}
 
 export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, onOpenPeriods }) {
   const [chapters, setChapters] = useState([]);
@@ -180,7 +190,10 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   };
   const openEdit = (ch) => {
     setEditing(ch);
-    setForm({ title: ch.title || '', page_from: ch.page_from || '', page_to: ch.page_to || '' });
+    // edit in PRINTED numbers (what the teacher sees in the book)
+    const pf = ch.printed_from != null ? ch.printed_from : ch.page_from;
+    const pt = ch.printed_to   != null ? ch.printed_to   : ch.page_to;
+    setForm({ title: ch.title || '', page_from: pf || '', page_to: pt || '' });
     setModalOpen(true);
   };
 
@@ -189,6 +202,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
     if (!form.title.trim()) return alert('Chapter title is required.');
     setSaving(true);
     try {
+      // send PRINTED numbers; the backend converts to PDF pages
       const body = {
         title: form.title.trim(),
         page_from: form.page_from ? parseInt(form.page_from, 10) : null,
@@ -237,43 +251,46 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       <div className="overflow-y-auto custom-scrollbar flex-1 p-2 space-y-1">
         {chapters.length === 0 ? (
           <p className="p-6 text-center text-sm text-zinc-400 font-medium">No chapters detected.</p>
-        ) : chapters.map((ch) => (
-          <div key={ch.id}
-            className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
-              selectedId === ch.id
-                ? 'bg-primary/5 ring-primary/20 shadow-sm'
-                : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
-            }`}
-            onClick={() => onSelect(ch.id)}>
-            <div className="p-3 flex items-start gap-3">
-              <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
-              <div className="min-w-0 flex-1">
-                <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
-                  selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
-                }`}>
-                  {ch.title}
-                </p>
-                {pageLabel(ch.page_from, ch.page_to) && (
-                  <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
-                    {pageLabel(ch.page_from, ch.page_to)}
-                  </span>
+        ) : chapters.map((ch) => {
+          const label = chapterLabel(ch);
+          return (
+            <div key={ch.id}
+              className={`group rounded-md transition-all cursor-pointer ring-1 ring-inset ${
+                selectedId === ch.id
+                  ? 'bg-primary/5 ring-primary/20 shadow-sm'
+                  : 'bg-white ring-transparent hover:ring-black/5 hover:bg-zinc-50'
+              }`}
+              onClick={() => onSelect(ch.id)}>
+              <div className="p-3 flex items-start gap-3">
+                <BookMarked className={`size-4 mt-0.5 shrink-0 transition-colors ${selectedId === ch.id ? 'text-primary' : 'text-zinc-400'}`} />
+                <div className="min-w-0 flex-1">
+                  <p className={`font-semibold text-sm leading-tight transition-colors truncate ${
+                    selectedId === ch.id ? 'text-primary' : 'text-zinc-900 group-hover:text-primary'
+                  }`}>
+                    {ch.title}
+                  </p>
+                  {label && (
+                    <span className="inline-block text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded mt-1.5">
+                      {label}
+                    </span>
+                  )}
+                </div>
+                {canEdit && (
+                  <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
+                      className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                      <Edit className="size-3.5" />
+                    </button>
+                    <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
+                      className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
                 )}
               </div>
-              {canEdit && (
-                <div className="flex flex-col gap-1 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
-                  <button onClick={e => { e.stopPropagation(); openEdit(ch); }}
-                    className="p-1.5 text-zinc-400 hover:text-primary hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                    <Edit className="size-3.5" />
-                  </button>
-                  <button onClick={e => { e.stopPropagation(); handleDelete(ch); }}
-                    className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-white rounded-md transition-colors shadow-sm ring-1 ring-transparent hover:ring-black/5">
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {canEdit && (
@@ -329,8 +346,8 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                   </div>
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Page numbers are the PDF's own pages. Whatever range you set is
-                  exactly what opens in the viewer.
+                  Use the page numbers printed in the book (the number at the
+                  bottom of the page). The viewer opens exactly at those pages.
                 </p>
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
@@ -367,6 +384,7 @@ function DocumentPanel({ chapter }) {
 
   const url = `${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/pdf`;
   const openFull = () => window.open(url, '_blank');
+  const label = chapterLabel(chapter);
 
   return (
     <div className="bg-white rounded-lg ring-1 ring-black/5 shadow-sm flex flex-col min-h-[500px] xl:min-h-[600px] flex-1 overflow-hidden">
@@ -376,9 +394,9 @@ function DocumentPanel({ chapter }) {
           <h3 className="font-semibold text-sm text-zinc-900 truncate">{chapter.title}</h3>
         </div>
         <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-          {pageLabel(chapter.page_from, chapter.page_to) && (
+          {label && (
             <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider mr-1">
-              {pageLabel(chapter.page_from, chapter.page_to)}
+              {label}
             </span>
           )}
           <button onClick={openFull} title="Open full screen"

@@ -3825,31 +3825,31 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 
 
 // =====================================================================
-//  BACKEND — Section 22: SYLLABUS  (v7 — robust detection, all PDFs)
+//  BACKEND — Section 22: SYLLABUS  (v8 — OCR, printed-number aware)
 //
 //  REPLACE your whole Section 22 block with this. Self-contained.
 //
-//  REQUIRED packages (install in backend, commit package.json):
-//      npm install pdfjs-dist@3.11.174 pdf-lib --save
+//  REQUIRED:   npm install pdfjs-dist@3.11.174 pdf-lib --save
+//  OCR (now required for scanned books — you chose this):
+//              npm install tesseract.js @napi-rs/canvas --save
+//  If the OCR libs are ever missing the code still runs; it just can't
+//  read printed numbers off scanned pages (labels then show PDF pages).
 //
-//  OPTIONAL packages — enable auto-detection for SCANNED books (OCR).
-//  Everything still works without them (scanned books just fall back to
-//  a single "Index" entry and the teacher adds chapters). To enable OCR:
-//      npm install tesseract.js @napi-rs/canvas --save
+//  HOW NUMBERS WORK (the fix for "reader says 2, book says 1"):
+//    • page_from / page_to are the PDF's REAL pages -> used for slicing,
+//      so a chapter always OPENS exactly at its first page.
+//    • page_offset = front-matter pages = (PDF page) - (printed page),
+//      detected from the book (page labels, page-bottom text, or OCR).
+//    • The UI shows PRINTED numbers = page_from - page_offset, i.e. the
+//      number printed on the page (the "1" at the bottom). Teachers edit
+//      in printed numbers too; the server converts back to PDF pages.
 //
-//  DETECTION LADDER (stops at the first that works; never invents junk):
-//    1. Bookmarks / outline (top level)        -> exact PDF pages.
-//    2. Contents page -> chapter titles + their printed numbers, then
-//       map printed -> real PDF page via, in order:
-//          a. embedded PDF page labels          (exact, no scanning)
-//          b. finding the title in the body TEXT (exact, digital books)
-//          c. finding the title via OCR          (exact, scanned books*)
-//          d. offset estimate from contents page (rough; teacher fixes)
-//    3. Nothing usable -> ONE "Index" entry (whole book); add chapters
-//       manually. (No "Full Document" item is ever created.)
-//
-//  Pages are the PDF's REAL pages: each chapter is pre-sliced to exactly
-//  its pages, so the label and what opens are always the same thing.
+//  DETECTION LADDER (first that works wins; no "Full Document" ever):
+//    1. Bookmarks/outline                 -> exact PDF pages.
+//    2. Contents page (text, else OCR)    -> titles + printed numbers,
+//       converted to PDF pages via the detected offset.
+//    3. Nothing usable                    -> one "Index" entry; add
+//       chapters manually.
 //
 //  Reuses nowSQL() from Section 16.
 // =====================================================================
@@ -3857,20 +3857,26 @@ app.delete('/api/admin/study-materials/:id', async (req, res) => {
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.js');
 const { PDFDocument } = require('pdf-lib');
 
-// ---- optional OCR libs (loaded lazily; absence is harmless) ----------
-let _ocr = null, _canvas = null, _ocrTried = false, _worker = null;
-function _ensureOcrLibs() {
-    if (_ocrTried) return _ocr && _canvas;
+// ---- optional OCR libs (lazy, guarded) -------------------------------
+let _ocr = null, _canvasLib = null, _ocrTried = false, _worker = null;
+function _ensureOcr() {
+    if (_ocrTried) return _ocr && _canvasLib;
     _ocrTried = true;
-    try { _ocr = require('tesseract.js'); _canvas = require('@napi-rs/canvas'); }
-    catch (_) { _ocr = null; _canvas = null; }
-    return _ocr && _canvas;
+    try { _ocr = require('tesseract.js'); _canvasLib = require('@napi-rs/canvas'); }
+    catch (_) { _ocr = null; _canvasLib = null; }
+    return _ocr && _canvasLib;
 }
-async function _ocrWorker() {
-    if (!_worker) _worker = await _ocr.createWorker('eng');
-    return _worker;
+async function _worker_() { if (!_worker) _worker = await _ocr.createWorker('eng'); return _worker; }
+async function _ocrEnd() { try { if (_worker) { await _worker.terminate(); _worker = null; } } catch (_) {} }
+
+function _canvasFactory() {
+    const { createCanvas } = _canvasLib;
+    return {
+        create(w, h) { const c = createCanvas(Math.ceil(w) || 1, Math.ceil(h) || 1); return { canvas: c, context: c.getContext('2d') }; },
+        reset(co, w, h) { co.canvas.width = Math.ceil(w) || 1; co.canvas.height = Math.ceil(h) || 1; },
+        destroy(co) { try { co.canvas.width = 0; co.canvas.height = 0; } catch (_) {} co.canvas = null; co.context = null; },
+    };
 }
-async function _ocrDone() { try { if (_worker) { await _worker.terminate(); _worker = null; } } catch (_) {} }
 
 // ---------------------------------------------------------------------
 //  Text helpers
@@ -3879,12 +3885,16 @@ const _squash = (s) => (s || '').replace(/\s+/g, ' ').trim();
 const _norm   = (s) => (s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
 const _cleanTitle = (t) => (t || '').replace(/\.pdf\s*$/i, '').replace(/\s+/g, ' ').trim();
 const _titleCase  = (s) => (s || '').toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
-
 function _formatChapterTitle(clean, seq) {
     const m = clean.match(/^(\d+)\s*[.)]?\s*(.*)$/);
     if (m && m[2]) return `${m[1]}. ${_titleCase(m[2])}`;
     if (m)         return `${m[1]}. Chapter ${m[1]}`;
     return `${seq}. ${_titleCase(clean)}`;
+}
+function _median(arr) {
+    if (!arr.length) return null;
+    const a = [...arr].sort((x, y) => x - y);
+    return a[Math.floor(a.length / 2)];
 }
 
 async function _pageText(doc, p) {
@@ -3892,14 +3902,12 @@ async function _pageText(doc, p) {
     const tc = await page.getTextContent();
     return _squash(tc.items.map(i => i.str || '').join(' '));
 }
-
 async function _pageLines(doc, p) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
     const buckets = [];
     for (const it of tc.items) {
-        const s = it.str || '';
-        if (!s.trim()) continue;
+        const s = it.str || ''; if (!s.trim()) continue;
         const y = it.transform[5], x = it.transform[4];
         let b = buckets.find(bk => Math.abs(bk.y - y) <= 3);
         if (!b) { b = { y, parts: [] }; buckets.push(b); }
@@ -3909,69 +3917,132 @@ async function _pageLines(doc, p) {
     return buckets.map(b => _squash(b.parts.sort((p, q) => p.x - q.x).map(p => p.s).join(' ')));
 }
 
-// Render the TOP portion of a page to a PNG buffer (for OCR). Guarded.
-async function _renderTopPng(doc, p, fraction = 0.45, scale = 1.7) {
+// Render a horizontal BAND of a page to PNG. band 'bottom' | 'top' | 'full'
+async function _renderBandPng(doc, p, band = 'full', frac = 1, scale = 1.7) {
     const page = await doc.getPage(p);
     const vp = page.getViewport({ scale });
     const W = Math.ceil(vp.width), H = Math.ceil(vp.height);
-    const { createCanvas } = _canvas;
+    const { createCanvas } = _canvasLib;
     const full = createCanvas(W, H);
     const fctx = full.getContext('2d');
-    fctx.fillStyle = '#ffffff'; fctx.fillRect(0, 0, W, H);
+    fctx.fillStyle = '#fff'; fctx.fillRect(0, 0, W, H);
     await page.render({ canvasContext: fctx, viewport: vp }).promise;
-    const cropH = Math.max(1, Math.ceil(H * fraction));
-    const crop = createCanvas(W, cropH);
-    crop.getContext('2d').drawImage(full, 0, 0);
-    return crop.toBuffer('image/png');
+    if (band === 'full' || frac >= 1) return full.toBuffer('image/png');
+    const bandH = Math.max(1, Math.ceil(H * frac));
+    const srcY = band === 'bottom' ? (H - bandH) : 0;
+    const out = createCanvas(W, bandH);
+    out.getContext('2d').drawImage(full, 0, -srcY);
+    return out.toBuffer('image/png');
 }
-
-// Text to search a page with: real text layer, else OCR (if enabled/under cap)
-async function _searchText(doc, p, ocrState) {
-    const txt = await _pageText(doc, p);
-    if (_norm(txt).length >= 15) return txt;
-    if (ocrState.ok && ocrState.used < ocrState.cap) {
-        try {
-            const buf = await _renderTopPng(doc, p);
-            const w = await _ocrWorker();
-            const { data } = await w.recognize(buf);
-            ocrState.used++;
-            return data.text || '';
-        } catch (_) { ocrState.ok = false; }
-    }
-    return txt;
+async function _ocrImage(buf, digitsOnly) {
+    const w = await _worker_();
+    await w.setParameters({
+        tessedit_char_whitelist: digitsOnly ? '0123456789' : '',
+        tessedit_pageseg_mode: digitsOnly ? '7' : '3',
+    });
+    const { data } = await w.recognize(buf);
+    return data.text || '';
 }
 
 // ---------------------------------------------------------------------
-//  Public: detect chapters -> { total, chapters:[{title,page_from,page_to}] }
+//  Detect the front-matter OFFSET = (PDF page) - (printed page)
+//    Tries: PDF page labels -> page-bottom text -> OCR of page bottoms.
+// ---------------------------------------------------------------------
+async function _detectOffset(doc, total, ocrOk) {
+    // 1) embedded page labels
+    try {
+        const labels = await doc.getPageLabels();
+        if (labels && labels.length) {
+            const trivial = labels.every((l, i) => String(l) === String(i + 1));
+            if (!trivial) {
+                const diffs = [];
+                labels.forEach((l, i) => {
+                    const n = parseInt(String(l), 10);
+                    if (Number.isFinite(n) && n >= 1) diffs.push((i + 1) - n);
+                });
+                const off = _median(diffs);
+                if (off != null && off >= 0 && off < total) return off;
+            }
+        }
+    } catch (_) {}
+
+    // sample pages spread across the body
+    const start = Math.min(total, 8);
+    const step = Math.max(1, Math.floor((total - start) / 16));
+    const sample = [];
+    for (let p = start; p <= total && sample.length < 18; p += step) sample.push(p);
+
+    const readBottomNumber = (txt) => {
+        const lines = _squash(txt).split(/\s+/);
+        // also try last visual lines via regex on raw text
+        const m = (txt.match(/(?:^|\s)(\d{1,4})(?:\s*)$/m));
+        if (m) { const n = parseInt(m[1], 10); if (n >= 1 && n <= total) return n; }
+        for (let i = lines.length - 1; i >= 0 && i >= lines.length - 4; i--) {
+            if (/^\d{1,4}$/.test(lines[i])) { const n = parseInt(lines[i], 10); if (n >= 1 && n <= total) return n; }
+        }
+        return null;
+    };
+
+    // 2) page-bottom TEXT
+    let diffs = [];
+    for (const p of sample) {
+        try {
+            const lines = await _pageLines(doc, p);
+            const bottom = lines.slice(-3).join(' ');
+            const n = readBottomNumber(bottom);
+            if (n != null) diffs.push(p - n);
+        } catch (_) {}
+    }
+    let off = _median(diffs.filter(d => d >= 0 && d < total));
+    if (off != null && diffs.length >= 4) return off;
+
+    // 3) OCR page bottoms
+    if (ocrOk) {
+        diffs = [];
+        for (const p of sample) {
+            try {
+                const buf = await _renderBandPng(doc, p, 'bottom', 0.14, 2.0);
+                const txt = await _ocrImage(buf, true);
+                const nums = (txt.match(/\d{1,4}/g) || []).map(x => parseInt(x, 10)).filter(n => n >= 1 && n <= total);
+                // pick the candidate giving an offset closest to the running median
+                for (const n of nums) { const d = p - n; if (d >= 0 && d < total) diffs.push(d); }
+            } catch (_) { break; }
+        }
+        off = _median(diffs);
+        if (off != null) return off;
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------
+//  detectChapters -> { total, chapters:[{title,page_from,page_to}], offset }
+//    page_from/page_to are PDF pages. offset is for display/edit.
 // ---------------------------------------------------------------------
 async function detectChapters(buffer) {
+    const ocrOk = _ensureOcr();
     const doc = await pdfjsLib.getDocument({
         data: new Uint8Array(buffer), useSystemFonts: true, isEvalSupported: false,
+        ...(ocrOk ? { canvasFactory: _canvasFactory() } : {}),
     }).promise;
     const total = doc.numPages;
 
+    let offset = 0;
+    try { offset = await _detectOffset(doc, total, ocrOk); } catch (_) { offset = 0; }
+
     let chapters = [];
-
-    // 1) bookmarks
     try { chapters = await _fromOutline(doc, total); } catch (_) { chapters = []; }
-
-    // 2) contents page -> titles + printed, then map to real PDF pages
     if (!chapters.length) {
-        try { chapters = await _fromContents(doc, total); } catch (_) { chapters = []; }
+        try { chapters = await _fromContents(doc, total, offset, ocrOk); } catch (_) { chapters = []; }
     }
 
-    await _ocrDone();
-
-    // 3) graceful fallback: a single Index entry (NEVER "Full Document")
+    await _ocrEnd();
     if (!chapters.length) chapters = [{ title: 'Index', page_from: 1, page_to: total }];
 
     try { await doc.cleanup(); await doc.destroy(); } catch (_) {}
-    return { total, chapters };
+    return { total, chapters, offset };
 }
 
-// ---------------------------------------------------------------------
-//  Strategy 1 — bookmarks (top level only)
-// ---------------------------------------------------------------------
+// ---- Strategy 1: bookmarks ------------------------------------------
 async function _fromOutline(doc, total) {
     const outline = await doc.getOutline();
     if (!outline || !outline.length) return [];
@@ -3983,67 +4054,46 @@ async function _fromOutline(doc, total) {
     if (!items.some(i => i.start != null)) return [];
     return _assemble(items, total);
 }
-
 async function _destToPageIndex(doc, dest) {
     try {
         let d = dest;
         if (typeof d === 'string') d = await doc.getDestination(d);
-        if (!Array.isArray(d) || !d.length) return null;
-        if (d[0] == null) return null;
+        if (!Array.isArray(d) || !d.length || d[0] == null) return null;
         return await doc.getPageIndex(d[0]);
     } catch (_) { return null; }
 }
 
-// ---------------------------------------------------------------------
-//  Strategy 2 — contents page -> titles + printed numbers -> real pages
-// ---------------------------------------------------------------------
-async function _fromContents(doc, total) {
-    // (a) read the contents listing as text; if the contents page itself is
-    //     scanned, OCR the first few pages to recover it.
+// ---- Strategy 2: contents page (text, else OCR) ---------------------
+async function _fromContents(doc, total, offset, ocrOk) {
     const scan = Math.min(total, 25);
     let toc = [];
-    let tocPage = 0;
-
     for (let p = 1; p <= scan; p++) {
         const lines = await _pageLines(doc, p);
-        const before = toc.length;
         _collectToc(lines, total, toc);
-        if (toc.length > before) tocPage = p;
     }
-
-    if (toc.length < 2 && _ensureOcrLibs()) {           // contents page is scanned
-        for (let p = 1; p <= Math.min(total, 10); p++) {
+    if (toc.length < 2 && ocrOk) {
+        for (let p = 1; p <= Math.min(total, 8); p++) {
             try {
-                const buf = await _renderTopPng(doc, p, 0.95);
-                const w = await _ocrWorker();
-                const { data } = await w.recognize(buf);
-                const lines = (data.text || '').split('\n').map(_squash).filter(Boolean);
-                const before = toc.length;
-                _collectToc(lines, total, toc);
-                if (toc.length > before) tocPage = p;
+                const buf = await _renderBandPng(doc, p, 'full', 1, 1.7);
+                const txt = await _ocrImage(buf, false);
+                _collectToc(txt.split('\n').map(_squash).filter(Boolean), total, toc);
             } catch (_) { break; }
         }
     }
     if (toc.length < 2) return [];
 
-    // de-dup by printed number, keep printed order
     toc.sort((a, b) => a.printed - b.printed);
-    const seen = new Set();
-    const ordered = [];
-    for (const t of toc) {
-        if (seen.has(t.printed)) continue;
-        seen.add(t.printed);
-        ordered.push(t);
-    }
+    const seen = new Set(); const ordered = [];
+    for (const t of toc) { if (seen.has(t.printed)) continue; seen.add(t.printed); ordered.push(t); }
 
-    // (b) map printed -> real PDF page
-    let items = await _mapByLabels(doc, total, ordered);          // exact, cheap
-    if (!items) items = await _mapByBodyOrOcr(doc, total, ordered, tocPage); // exact-ish
-    if (!items) items = _mapByEstimate(total, ordered, tocPage);  // rough fallback
-
+    // printed -> PDF page using the detected offset
+    const items = ordered.map(t => {
+        let s = t.printed + (offset || 0);
+        if (s < 1) s = 1; if (s > total) s = total;
+        return { title: t.title, start: s };
+    });
     return _assemble(items, total);
 }
-
 function _collectToc(lines, total, out) {
     for (const ln of lines) {
         const m = ln.match(/^(.*?[A-Za-z].*?)[\s.·•\-_]{2,}(\d{1,4})$/);
@@ -4052,73 +4102,15 @@ function _collectToc(lines, total, out) {
         const printed = parseInt(m[2], 10);
         if (title.length < 3 || !/[A-Za-z]/.test(title)) continue;
         if (!(printed >= 1 && printed <= total)) continue;
-        // skip obvious non-chapter lines
-        if (/^(page|contents|index|preface|foreword)$/i.test(title)) continue;
+        if (/^(page|contents|index|preface|foreword|unit)$/i.test(title)) continue;
         out.push({ title, printed });
     }
 }
 
-// (b-a) embedded page labels: map printed-number string -> pdf page index
-async function _mapByLabels(doc, total, ordered) {
-    let labels = null;
-    try { labels = await doc.getPageLabels(); } catch (_) { labels = null; }
-    if (!labels || !labels.length) return null;
-
-    // labels must actually differ from the trivial 1..n (else they tell us nothing)
-    const trivial = labels.every((l, i) => String(l) === String(i + 1));
-    if (trivial) return null;
-
-    const map = new Map();
-    labels.forEach((l, i) => { const k = String(l).trim(); if (!map.has(k)) map.set(k, i + 1); });
-
-    let hits = 0;
-    const items = ordered.map(t => {
-        const pg = map.get(String(t.printed));
-        if (pg) hits++;
-        return { title: t.title, start: pg || null };
-    });
-    return hits >= Math.ceil(ordered.length * 0.6) ? items : null;
-}
-
-// (b-b/c) find each chapter title in the body (text layer, else OCR)
-async function _mapByBodyOrOcr(doc, total, ordered, tocPage) {
-    const ocrState = { ok: _ensureOcrLibs(), used: 0, cap: 60 };
-    const items = [];
-    let from = Math.max(1, tocPage + 1);
-    for (const t of ordered) {
-        const needle = _norm(t.title).replace(/^\d+\s*/, '');
-        let found = null;
-        if (needle.length >= 4) {
-            const limit = Math.min(total, from + 90);
-            for (let p = from; p <= limit; p++) {
-                const head = _norm((await _searchText(doc, p, ocrState)).slice(0, 500));
-                if (head.includes(needle)) { found = p; from = p; break; }
-            }
-        }
-        items.push({ title: t.title, start: found });
-    }
-    const pinned = items.filter(i => i.start != null).length;
-    return pinned >= Math.ceil(ordered.length * 0.5) ? items : null;
-}
-
-// (b-d) rough: assume printed page 1 begins just after the contents page
-function _mapByEstimate(total, ordered, tocPage) {
-    const base = ordered[0].printed;                  // usually 1
-    const offset = Math.max(0, (tocPage || 0) - (base - 1));
-    return ordered.map(t => {
-        let s = t.printed + offset;
-        if (s < 1) s = 1; if (s > total) s = total;
-        return { title: t.title, start: s };
-    });
-}
-
-// ---------------------------------------------------------------------
-//  Shared assembler — order, interpolate gaps, prepend ONE Index
-// ---------------------------------------------------------------------
+// ---- shared assembler -----------------------------------------------
 function _assemble(items, total) {
     if (!items.length) return [];
     const n = items.length;
-
     const starts = items.map(it => (Number.isFinite(it.start) ? it.start : null));
     let prev = 0;
     for (let i = 0; i < n; i++) {
@@ -4134,14 +4126,11 @@ function _assemble(items, total) {
         const base = l >= 0 ? l : -1;
         const span = (r < n ? r : n) - base;
         let v = Math.round(lv + (rv - lv) * ((i - base) / span));
-        if (v <= lv) v = lv + 1;
-        if (v > total) v = total;
+        if (v <= lv) v = lv + 1; if (v > total) v = total;
         starts[i] = v;
     }
-
     const cleaned = items.map((it, i) => ({ title: _cleanTitle(it.title), start: starts[i] }));
     const firstChapter = cleaned.findIndex(c => /^\d+\b/.test(c.title));
-
     const result = [];
     let startIdx = 0;
     if (firstChapter > 0) {
@@ -4150,7 +4139,6 @@ function _assemble(items, total) {
     } else if (cleaned[0].start > 1) {
         result.push({ title: 'Index', page_from: 1, page_to: cleaned[0].start - 1 });
     }
-
     let seq = 0;
     for (let i = startIdx; i < n; i++) {
         seq++;
@@ -4161,9 +4149,7 @@ function _assemble(items, total) {
     return result;
 }
 
-// ---------------------------------------------------------------------
-//  Slicing — exact PDF pages (no offset)
-// ---------------------------------------------------------------------
+// ---- slicing (exact PDF pages) --------------------------------------
 async function sliceAll(buffer, ranges) {
     const src = await PDFDocument.load(buffer, { ignoreEncryption: true });
     const total = src.getPageCount();
@@ -4173,8 +4159,7 @@ async function sliceAll(buffer, ranges) {
         let end = Math.min(total, parseInt(to, 10) || total);
         if (end < start) end = start;
         const d = await PDFDocument.create();
-        const idx = [];
-        for (let i = start - 1; i <= end - 1; i++) idx.push(i);
+        const idx = []; for (let i = start - 1; i <= end - 1; i++) idx.push(i);
         const pages = await d.copyPages(src, idx);
         pages.forEach(p => d.addPage(p));
         const bytes = await d.save();
@@ -4182,20 +4167,15 @@ async function sliceAll(buffer, ranges) {
     }
     return { total, slices };
 }
-async function slicePdf(buffer, from, to) {
-    const { slices } = await sliceAll(buffer, [[from, to]]);
-    return slices[0];
-}
+async function slicePdf(buffer, from, to) { const { slices } = await sliceAll(buffer, [[from, to]]); return slices[0]; }
 async function resliceChapter(chapterId) {
     const [rows] = await db.execute(
         `SELECT c.page_from, c.page_to, s.doc_data
-           FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id
-          WHERE c.id = ?`, [chapterId]);
+           FROM syllabus_chapters c JOIN syllabus s ON s.id = c.syllabus_id WHERE c.id = ?`, [chapterId]);
     if (!rows.length) return;
     const r = rows[0];
     if (!r.doc_data || !r.page_from) {
-        await db.execute('UPDATE syllabus_chapters SET doc_data = NULL, doc_pages = NULL WHERE id = ?', [chapterId]);
-        return;
+        await db.execute('UPDATE syllabus_chapters SET doc_data = NULL, doc_pages = NULL WHERE id = ?', [chapterId]); return;
     }
     const base64 = String(r.doc_data).replace(/^data:[^;]+;base64,/, '');
     const buffer = Buffer.from(base64, 'base64');
@@ -4205,14 +4185,21 @@ async function resliceChapter(chapterId) {
         ['data:application/pdf;base64,' + b64, Math.max(1, (to - from + 1)), chapterId]);
 }
 
+// helper: read a syllabus' offset
+async function _syllabusOffset(syllabusId) {
+    try {
+        const [r] = await db.execute('SELECT page_offset FROM syllabus WHERE id = ?', [syllabusId]);
+        return (r.length && Number.isFinite(r[0].page_offset)) ? r[0].page_offset : 0;
+    } catch (_) { return 0; }
+}
+
 
 // =====================================================================
 //  ROUTES
 // =====================================================================
 
 app.get('/api/admin/syllabus/list/:instId', async (req, res) => {
-    const { instId } = req.params;
-    const { classId } = req.query;
+    const { instId } = req.params; const { classId } = req.query;
     try {
         let sql = `
             SELECT s.id, s.class_id, s.subject_id, s.teacher_id, s.updated_at,
@@ -4242,8 +4229,7 @@ app.post('/api/admin/syllabus', async (req, res) => {
             [institutionId, academic_year_id || null, class_id, subject_id, teacher_id || null, created_by || null]);
         res.json({ success: true, id: result.insertId });
     } catch (err) {
-        if (err.code === 'ER_DUP_ENTRY')
-            return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
+        if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A syllabus for this class and subject already exists.' });
         res.status(500).json({ error: err.message });
     }
 });
@@ -4274,8 +4260,10 @@ app.get('/api/admin/syllabus/resolve/:instId/:classId/:subjectId', async (req, r
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// chapters now also return printed_from / printed_to (the book's numbers)
 app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
     try {
+        const off = await _syllabusOffset(req.params.syllabusId);
         const [rows] = await db.execute(
             `SELECT c.id, c.syllabus_id, c.chapter_order, c.title, c.page_from, c.page_to, c.doc_pages,
                     c.periods, c.start_date, c.end_date,
@@ -4283,16 +4271,24 @@ app.get('/api/admin/syllabus/:syllabusId/chapters', async (req, res) => {
                     (SELECT COUNT(*) FROM syllabus_keywords k WHERE k.chapter_id = c.id) AS keyword_count
                FROM syllabus_chapters c WHERE c.syllabus_id = ?
               ORDER BY c.chapter_order, c.id`, [req.params.syllabusId]);
-        res.json(rows);
+        const out = rows.map(r => {
+            const isIndex = /^index$/i.test((r.title || '').trim());
+            const pf = isIndex ? null : (r.page_from != null ? r.page_from - off : null);
+            const pt = isIndex ? null : (r.page_to   != null ? r.page_to   - off : null);
+            return { ...r, page_offset: off,
+                     printed_from: pf != null && pf >= 1 ? pf : null,
+                     printed_to:   pt != null && pt >= 1 ? pt : null };
+        });
+        res.json(out);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
     try {
         const [rows] = await db.execute(
-            `SELECT doc_name, doc_pages, (doc_data IS NOT NULL) AS has_book FROM syllabus WHERE id = ?`,
+            `SELECT doc_name, doc_pages, page_offset, (doc_data IS NOT NULL) AS has_book FROM syllabus WHERE id = ?`,
             [req.params.syllabusId]);
-        res.json(rows[0] || { has_book: 0 });
+        res.json(rows[0] || { has_book: 0, page_offset: 0 });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -4304,11 +4300,11 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
         const base64 = String(doc_data).replace(/^data:[^;]+;base64,/, '');
         const buffer = Buffer.from(base64, 'base64');
 
-        const { total, chapters } = await detectChapters(buffer);
+        const { total, chapters, offset } = await detectChapters(buffer);
 
         await db.execute(
-            `UPDATE syllabus SET doc_name = ?, doc_data = ?, doc_pages = ?, updated_at = ? WHERE id = ?`,
-            [doc_name || null, doc_data, total, nowSQL(), syllabusId]);
+            `UPDATE syllabus SET doc_name = ?, doc_data = ?, doc_pages = ?, page_offset = ?, updated_at = ? WHERE id = ?`,
+            [doc_name || null, doc_data, total, offset || 0, nowSQL(), syllabusId]);
 
         await db.execute('DELETE FROM syllabus_chapters WHERE syllabus_id = ?', [syllabusId]);
 
@@ -4325,7 +4321,7 @@ app.put('/api/admin/syllabus/:syllabusId/book', async (req, res) => {
                 [syllabusId, order++, ch.title, ch.page_from, ch.page_to, doc_name || null,
                  'data:application/pdf;base64,' + slices[i], ch.page_to - ch.page_from + 1]);
         }
-        res.json({ success: true, total_pages: total, chapters: chapters.length });
+        res.json({ success: true, total_pages: total, chapters: chapters.length, page_offset: offset || 0 });
     } catch (err) {
         console.error('Textbook detection failed:', err);
         res.status(500).json({ error: 'Could not read this PDF: ' + err.message });
@@ -4346,24 +4342,25 @@ app.get('/api/admin/syllabus/chapter/:id/pdf', async (req, res) => {
 
 app.get('/api/admin/syllabus/chapter/:id/doc', async (req, res) => {
     try {
-        const [rows] = await db.execute(
-            'SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        const [rows] = await db.execute('SELECT doc_name, doc_data, doc_pages FROM syllabus_chapters WHERE id = ?', [req.params.id]);
         if (!rows.length || !rows[0].doc_data) return res.json({});
         res.json(rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// create/update take PRINTED numbers; we convert to PDF pages via offset
 app.post('/api/admin/syllabus/chapters', async (req, res) => {
     const { syllabus_id, title, page_from, page_to } = req.body;
     if (!syllabus_id || !title) return res.status(400).json({ error: 'syllabus_id and title are required.' });
     try {
+        const off = await _syllabusOffset(syllabus_id);
+        const pf = page_from ? parseInt(page_from, 10) + off : null;
+        const pt = page_to   ? parseInt(page_to, 10)   + off : null;
         const [[{ maxOrder }]] = await db.execute(
-            `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder FROM syllabus_chapters WHERE syllabus_id = ?`,
-            [syllabus_id]);
+            `SELECT COALESCE(MAX(chapter_order), -1) + 1 AS maxOrder FROM syllabus_chapters WHERE syllabus_id = ?`, [syllabus_id]);
         const [result] = await db.execute(
             `INSERT INTO syllabus_chapters (syllabus_id, chapter_order, title, page_from, page_to)
-             VALUES (?, ?, ?, ?, ?)`,
-            [syllabus_id, maxOrder, title, page_from || null, page_to || null]);
+             VALUES (?, ?, ?, ?, ?)`, [syllabus_id, maxOrder, title, pf, pt]);
         await resliceChapter(result.insertId);
         await db.execute('UPDATE syllabus SET updated_at = ? WHERE id = ?', [nowSQL(), syllabus_id]);
         res.json({ success: true, id: result.insertId });
@@ -4373,8 +4370,12 @@ app.post('/api/admin/syllabus/chapters', async (req, res) => {
 app.put('/api/admin/syllabus/chapters/:id', async (req, res) => {
     const { title, page_from, page_to } = req.body;
     try {
+        const [sr] = await db.execute('SELECT syllabus_id FROM syllabus_chapters WHERE id = ?', [req.params.id]);
+        const off = sr.length ? await _syllabusOffset(sr[0].syllabus_id) : 0;
+        const pf = page_from ? parseInt(page_from, 10) + off : null;
+        const pt = page_to   ? parseInt(page_to, 10)   + off : null;
         await db.execute(`UPDATE syllabus_chapters SET title = ?, page_from = ?, page_to = ? WHERE id = ?`,
-            [title, page_from || null, page_to || null, req.params.id]);
+            [title, pf, pt, req.params.id]);
         await resliceChapter(req.params.id);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4405,8 +4406,7 @@ app.post('/api/admin/syllabus/chapter/:id/keywords', async (req, res) => {
     const { term, definition } = req.body;
     if (!term || !term.trim()) return res.status(400).json({ error: 'term is required.' });
     try {
-        const [result] = await db.execute(
-            'INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
+        const [result] = await db.execute('INSERT INTO syllabus_keywords (chapter_id, term, definition) VALUES (?, ?, ?)',
             [req.params.id, term.trim(), definition || null]);
         res.json({ success: true, id: result.insertId });
     } catch (err) { res.status(500).json({ error: err.message }); }
