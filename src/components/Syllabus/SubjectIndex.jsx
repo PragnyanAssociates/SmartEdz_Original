@@ -424,7 +424,7 @@ function DocumentPanel({ chapter }) {
 
 
 // =====================================================================
-//  RIGHT - Keywords
+//  RIGHT - Keywords (Updated with Definition & Example)
 // =====================================================================
 function KeywordsPanel({ chapter, canEdit }) {
   const [keywords, setKeywords] = useState([]);
@@ -433,6 +433,7 @@ function KeywordsPanel({ chapter, canEdit }) {
   const [adding, setAdding]     = useState(false);
   const [newTerm, setNewTerm]   = useState('');
   const [newDef, setNewDef]     = useState('');
+  const [newEx, setNewEx]       = useState('');
 
   const load = useCallback(async () => {
     if (!chapter) { setKeywords([]); return; }
@@ -452,7 +453,8 @@ function KeywordsPanel({ chapter, canEdit }) {
     const q = query.toLowerCase();
     return keywords.filter(k =>
       (k.term || '').toLowerCase().includes(q) ||
-      (k.definition || '').toLowerCase().includes(q));
+      (k.definition || '').toLowerCase().includes(q) ||
+      (k.example || '').toLowerCase().includes(q));
   }, [keywords, query]);
 
   const handleAdd = async (e) => {
@@ -461,10 +463,14 @@ function KeywordsPanel({ chapter, canEdit }) {
     try {
       const res = await fetch(`${API_BASE_URL}/admin/syllabus/chapter/${chapter.id}/keywords`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ term: newTerm.trim(), definition: newDef.trim() || null })
+        body: JSON.stringify({ 
+          term: newTerm.trim(), 
+          definition: newDef.trim() || null,
+          example: newEx.trim() || null 
+        })
       });
       if (!res.ok) throw new Error('Could not add keyword');
-      setNewTerm(''); setNewDef(''); setAdding(false);
+      setNewTerm(''); setNewDef(''); setNewEx(''); setAdding(false);
       load();
     } catch (e) { alert(e.message); }
   };
@@ -509,7 +515,10 @@ function KeywordsPanel({ chapter, canEdit }) {
                 placeholder="Keyword / term *"
                 className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
               <input value={newDef} onChange={e => setNewDef(e.target.value)}
-                placeholder="Meaning (optional)"
+                placeholder="Definition"
+                className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
+              <input value={newEx} onChange={e => setNewEx(e.target.value)}
+                placeholder="Example"
                 className="h-8 w-full bg-white border border-zinc-200 rounded-md px-2.5 text-xs text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
               <button type="submit" disabled={!newTerm.trim()}
                 className="h-8 w-full bg-primary hover:bg-primary/90 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-md font-semibold text-xs transition-colors shadow-sm mt-1">
@@ -537,7 +546,16 @@ function KeywordsPanel({ chapter, canEdit }) {
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-sm text-zinc-900 leading-tight">{k.term}</p>
                   {k.definition && (
-                    <p className="text-xs text-zinc-500 mt-1 leading-relaxed">{k.definition}</p>
+                    <p className="text-xs text-zinc-600 mt-1 leading-relaxed">
+                      <span className="font-semibold text-zinc-400 uppercase text-[9px] mr-1">Def:</span> 
+                      {k.definition}
+                    </p>
+                  )}
+                  {k.example && (
+                    <p className="text-xs text-zinc-500 mt-1 italic leading-relaxed">
+                      <span className="font-semibold text-zinc-400 uppercase text-[9px] not-italic mr-1">Ex:</span>
+                      {k.example}
+                    </p>
                   )}
                 </div>
                 {canEdit && (
