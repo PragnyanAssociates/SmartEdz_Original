@@ -45,7 +45,8 @@ export default function UserProfileDetail({ userId, onBack }) {
   }
 
   return (
-    <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+    // Added container classes here: p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto
+    <div className="p-4 sm:p-6 lg:p-8 max-w-[1440px] w-full mx-auto space-y-6 animate-in slide-in-from-bottom-2 duration-300">
       
       {/* Back Button */}
       <button onClick={onBack} className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-zinc-900 transition-colors">

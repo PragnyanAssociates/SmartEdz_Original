@@ -3244,19 +3244,20 @@ app.post('/api/admin/online-classes', videoUpload.single('videoFile'), async (re
 });
 
 // --- 22.4 Update Class (Multipart Form Data) ---
+// --- 22.4 Update Class (Multipart Form Data) ---
 app.put('/api/admin/online-classes/:id', videoUpload.single('videoFile'), async (req, res) => {
-    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description } = req.body;
+    const { title, class_type, class_id, subject_id, teacher_id, class_datetime, meet_link, topic, description, clear_video } = req.body;
     try {
         const [[existing]] = await db.execute('SELECT video_path FROM online_classes WHERE id = ?', [req.params.id]);
         let video_path = existing.video_path;
 
-        if (req.file) {
-            // Delete old file if replacing
+        // If a new file is uploaded, OR if switching to a link (clear_video flag), delete the old file
+        if (req.file || clear_video === 'true') {
             if (video_path) {
                 const oldPath = path.join(__dirname, '..', video_path);
                 if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
             }
-            video_path = `/public/uploads/online_classes/${req.file.filename}`;
+            video_path = req.file ? `/public/uploads/online_classes/${req.file.filename}` : null;
         }
 
         await db.execute(

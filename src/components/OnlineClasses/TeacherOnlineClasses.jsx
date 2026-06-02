@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../apiConfig';
 import { 
   Video, PlayCircle, Plus, Edit, Trash2, X, Search, 
-  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save
+  Loader2, Calendar as CalIcon, Clock, FileVideo, ChevronDown, Save, Link as LinkIcon // Added LinkIcon
 } from 'lucide-react';
 
 export default function TeacherOnlineClasses({ canEdit = false, canDelete = false }) {
@@ -12,17 +12,18 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
   const [classesList, setClassesList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
-  const [view, setView] = useState('live'); // 'live' | 'recorded'
+  const [view, setView] = useState('live'); 
 
-  // Dropdown data
   const [dbClasses, setDbClasses] = useState([]);
   const [dbSubjects, setDbSubjects] = useState([]);
   const [teachers, setTeachers] = useState([]);
 
-  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [saving, setSaving] = useState(false);
+  
+  // NEW: State to track if recorded class is using a file or a link
+  const [videoSource, setVideoSource] = useState('upload'); 
   const [selectedVideo, setSelectedVideo] = useState(null);
 
   const emptyForm = {
@@ -67,13 +68,13 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
   const classLabel = (c) => `${c.className}${c.section ? ` - ${c.section}` : ''}`;
 
-  // --- Modal Handlers ---
   const openCreate = () => {
     setEditingItem(null);
     const now = new Date();
     const localNow = new Date(now.getTime() - (now.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
     setForm({ ...emptyForm, class_datetime: localNow });
     setSelectedVideo(null);
+    setVideoSource('upload'); // Default for new recorded classes
     setIsModalOpen(true);
   };
 
@@ -93,6 +94,12 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       description: c.description || ''
     });
     setSelectedVideo(null);
+    
+    // Determine video source if editing a recorded class
+    if (c.class_type === 'recorded') {
+      setVideoSource(c.video_path ? 'upload' : 'link');
+    }
+    
     setIsModalOpen(true);
   };
 
@@ -109,9 +116,18 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     if (!form.title || !form.subject_id || !form.teacher_id) {
       return alert("Title, Subject, and Teacher are required.");
     }
-    if (form.class_type === 'live' && !form.meet_link) return alert("Meeting link required for live classes.");
-    if (form.class_type === 'recorded' && !selectedVideo && !editingItem?.video_path) {
-      return alert("Video file required for recorded classes.");
+    
+    // UPDATED VALIDATION
+    if (form.class_type === 'live' && !form.meet_link) {
+      return alert("Meeting link required for live classes.");
+    }
+    if (form.class_type === 'recorded') {
+      if (videoSource === 'upload' && !selectedVideo && !editingItem?.video_path) {
+        return alert("Video file required for recorded classes.");
+      }
+      if (videoSource === 'link' && !form.meet_link) {
+        return alert("Video link required for recorded classes.");
+      }
     }
 
     setSaving(true);
@@ -126,14 +142,21 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
       
       const formattedDate = form.class_datetime.replace('T', ' ') + ':00';
       formDataObj.append('class_datetime', formattedDate);
-      
-      if (form.class_type === 'live') formDataObj.append('meet_link', form.meet_link);
       if (form.topic) formDataObj.append('topic', form.topic);
       if (form.description) formDataObj.append('description', form.description);
       formDataObj.append('created_by', user.id);
 
-      if (form.class_type === 'recorded' && selectedVideo) {
-        formDataObj.append('videoFile', selectedVideo);
+      // UPDATED PAYLOAD LOGIC
+      if (form.class_type === 'live') {
+        formDataObj.append('meet_link', form.meet_link);
+      } else if (form.class_type === 'recorded') {
+        if (videoSource === 'link') {
+          formDataObj.append('meet_link', form.meet_link);
+          // Instruct backend to clear old video if switching from upload to link
+          if (editingItem?.video_path) formDataObj.append('clear_video', 'true');
+        } else if (videoSource === 'upload' && selectedVideo) {
+          formDataObj.append('videoFile', selectedVideo);
+        }
       }
 
       const url = editingItem 
@@ -156,9 +179,14 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
     setSaving(false);
   };
 
+  // UPDATED WATCH HANDLER
   const handleJoinOrWatch = (c) => {
-    if (c.class_type === 'live' && c.meet_link) window.open(c.meet_link, '_blank');
-    if (c.class_type === 'recorded' && c.video_path) window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+    if (c.class_type === 'live' && c.meet_link) {
+        window.open(c.meet_link, '_blank');
+    } else if (c.class_type === 'recorded') {
+        if (c.video_path) window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+        else if (c.meet_link) window.open(c.meet_link, '_blank');
+    }
   };
 
   return (
@@ -327,16 +355,36 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 
                 <Field label="Topic" placeholder="e.g. Linear Equations" value={form.topic} onChange={v => setForm({...form, topic: v})} />
 
+                {/* DYNAMIC FIELD BASED ON CLASS TYPE */}
                 {form.class_type === 'live' ? (
                   <Field label="Meeting Link" type="url" required placeholder="https://meet.google.com/..." value={form.meet_link} onChange={v => setForm({...form, meet_link: v})} />
                 ) : (
-                  <div className="space-y-1.5">
+                  <div className="space-y-3 p-4 bg-zinc-50 rounded-lg border border-zinc-100">
                     <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
-                      Video File {!editingItem && <span className="text-red-500">*</span>}
+                      Video Source
                     </label>
-                    <input type="file" accept="video/*" onChange={e => setSelectedVideo(e.target.files[0])} 
-                      className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
-                    {editingItem?.video_path && !selectedVideo && <p className="text-xs text-emerald-600 font-medium mt-1.5">Video currently uploaded. Select file only to replace.</p>}
+                    <div className="flex bg-zinc-200/50 p-1 rounded-md max-w-fit">
+                      <button type="button" onClick={() => setVideoSource('upload')}
+                        className={`px-4 py-1.5 rounded text-[11px] font-semibold transition-colors flex items-center gap-1.5 ${videoSource === 'upload' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                        <FileVideo className="size-3.5" /> Upload File
+                      </button>
+                      <button type="button" onClick={() => setVideoSource('link')}
+                        className={`px-4 py-1.5 rounded text-[11px] font-semibold transition-colors flex items-center gap-1.5 ${videoSource === 'link' ? 'bg-white shadow-sm text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                        <LinkIcon className="size-3.5" /> External Link
+                      </button>
+                    </div>
+
+                    <div className="mt-2">
+                      {videoSource === 'upload' ? (
+                        <div>
+                          <input type="file" accept="video/*" onChange={e => setSelectedVideo(e.target.files[0])} 
+                            className="block w-full text-sm text-zinc-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-zinc-100 file:text-zinc-700 hover:file:bg-zinc-200 cursor-pointer border border-zinc-200 rounded-md bg-white shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 h-9 leading-9" />
+                          {editingItem?.video_path && !selectedVideo && <p className="text-xs text-emerald-600 font-medium mt-1.5">Video currently uploaded. Select file only to replace.</p>}
+                        </div>
+                      ) : (
+                        <Field label="Video Link URL" type="url" required={videoSource === 'link'} placeholder="https://youtube.com/... or https://vimeo.com/..." value={form.meet_link} onChange={v => setForm({...form, meet_link: v})} />
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -366,10 +414,12 @@ export default function TeacherOnlineClasses({ canEdit = false, canDelete = fals
 function Field({ label, value, onChange, type = 'text', options, required, placeholder }) {
   const base = "h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 placeholder:text-zinc-400 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors shadow-sm";
   return (
-    <div className="space-y-1.5">
-      <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
-        {label} {required && <span className="text-red-500">*</span>}
-      </label>
+    <div className="space-y-1.5 w-full">
+      {label && (
+        <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+          {label} {required && <span className="text-red-500">*</span>}
+        </label>
+      )}
       {type === 'select' ? (
         <div className="relative">
           <select value={value || ''} onChange={e => onChange(e.target.value)}

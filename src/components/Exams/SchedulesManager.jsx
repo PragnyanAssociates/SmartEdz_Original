@@ -436,25 +436,28 @@ export default function SchedulesManager({ canManage }) {
                           </FormField>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pr-6">
-                          <FormField label="Date">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 pr-6">
+                          <FormField label="Date" className="lg:col-span-3">
                             <input type="date" value={r.date}
                               onChange={e => updateRow(i, 'date', e.target.value)} className={inputCls} />
                           </FormField>
-                          <FormField label="Subject">
+                          
+                          <FormField label="Subject" className="lg:col-span-3">
                             <input value={r.subject} onChange={e => updateRow(i, 'subject', e.target.value)}
                               placeholder="Maths" className={inputCls} />
                           </FormField>
-                          <FormField label="Time">
+                          
+                          <FormField label="Time" className="lg:col-span-4">
                             <div className="flex gap-2 items-center">
                               <input type="time" value={r.time_from}
-                                onChange={e => updateRow(i, 'time_from', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full`} />
-                              <span className="text-zinc-400 text-xs">-</span>
+                                onChange={e => updateRow(i, 'time_from', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full min-w-0`} />
+                              <span className="text-zinc-400 text-xs shrink-0">-</span>
                               <input type="time" value={r.time_to}
-                                onChange={e => updateRow(i, 'time_to', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full`} />
+                                onChange={e => updateRow(i, 'time_to', e.target.value)} className={`${inputCls} px-2 tabular-nums w-full min-w-0`} />
                             </div>
                           </FormField>
-                          <FormField label="Room">
+                          
+                          <FormField label="Room" className="lg:col-span-2">
                             <input value={r.room} onChange={e => updateRow(i, 'room', e.target.value)}
                               placeholder="e.g. 5" className={inputCls} />
                           </FormField>
@@ -619,9 +622,9 @@ export function ScheduleDetailView({ schedule }) {
 // -----------------------------------------------------------------
 const inputCls = 'h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 transition-colors';
 
-function FormField({ label, required, children }) {
+function FormField({ label, required, children, className = '' }) {
   return (
-    <div className="space-y-1.5">
+    <div className={`space-y-1.5 ${className}`}>
       <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider flex items-center gap-1">
         {label}{required && <span className="text-accent">*</span>}
       </label>

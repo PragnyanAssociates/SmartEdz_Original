@@ -38,8 +38,16 @@ export default function StudentOnlineClasses() {
   }, [classesList, view, query]);
 
   const handleJoinOrWatch = (c) => {
-    if (c.class_type === 'live' && c.meet_link) window.open(c.meet_link, '_blank');
-    if (c.class_type === 'recorded' && c.video_path) window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+    if (c.class_type === 'live' && c.meet_link) {
+      window.open(c.meet_link, '_blank');
+    } else if (c.class_type === 'recorded') {
+      // Check for file first, fallback to link
+      if (c.video_path) {
+        window.open(`${API_BASE_URL.replace('/api', '')}${c.video_path}`, '_blank');
+      } else if (c.meet_link) {
+        window.open(c.meet_link, '_blank');
+      }
+    }
   };
 
   return (
