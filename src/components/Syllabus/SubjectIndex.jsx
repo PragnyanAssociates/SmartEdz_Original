@@ -8,9 +8,11 @@ import { pageLabel, fileToBase64 } from './SyllabusUtils';
 
 // =====================================================================
 //  Subject Index — textbook-first, auto-detected chapters.
-//    LEFT   - Chapters (auto from the book's index; edit/delete to fix)
+//    LEFT   - Chapters (auto: Index + chapter-wise; edit/delete to fix)
 //    MIDDLE - PDF viewer showing ONLY the selected chapter's pages
 //    RIGHT  - Keywords for the selected chapter
+//
+//  Pages are the PDF's REAL pages: the label says exactly what opens.
 // =====================================================================
 
 export default function SubjectIndex({ syllabus, canEdit, activeYear, onBack, onOpenPeriods }) {
@@ -171,24 +173,6 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
   const [form, setForm] = useState({ title: '', page_from: '', page_to: '' });
   const [saving, setSaving] = useState(false);
 
-  const [offset, setOffset]    = useState(book?.page_offset ?? 0);
-  const [savingOff, setSavOff] = useState(false);
-  useEffect(() => { setOffset(book?.page_offset ?? 0); }, [book]);
-
-  const saveOffset = async () => {
-    setSavOff(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/admin/syllabus/${syllabusId}/book/offset`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ page_offset: parseInt(offset, 10) || 0 })
-      });
-      if (!res.ok) throw new Error('Could not save offset');
-      reload();
-    } catch (e) { alert(e.message); }
-    setSavOff(false);
-  };
-
   const openCreate = () => {
     setEditing(null);
     setForm({ title: '', page_from: '', page_to: '' });
@@ -293,21 +277,7 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
       </div>
 
       {canEdit && (
-        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0 space-y-2">
-          <div className="flex items-center gap-2">
-            <label className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider shrink-0" title="If the book's printed page 1 is not the PDF's first page, set the difference here.">
-              Page offset
-            </label>
-            <input type="number" value={offset}
-              onChange={e => setOffset(e.target.value)}
-              className="h-8 w-16 bg-white border border-zinc-200 rounded-md px-2 text-xs text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm" />
-            <button onClick={saveOffset} disabled={savingOff}
-              className="h-8 px-3 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 text-zinc-700 rounded-md font-semibold text-xs flex items-center gap-1.5 transition-all">
-              {savingOff ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              Apply
-            </button>
-          </div>
-
+        <div className="p-3 border-t border-zinc-100 bg-zinc-50/50 shrink-0">
           <div className="flex gap-2">
             <button onClick={openCreate}
               className="h-9 flex-1 bg-white ring-1 ring-black/5 shadow-sm hover:bg-zinc-50 hover:ring-black/10 text-zinc-700 rounded-md font-semibold text-xs flex items-center justify-center gap-1.5 transition-all">
@@ -358,6 +328,10 @@ function ChaptersPanel({ chapters, selectedId, canEdit, onSelect, reload, syllab
                       className="h-9 w-full bg-white border border-zinc-200 rounded-md px-3 text-sm text-zinc-900 outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 shadow-sm transition-colors" />
                   </div>
                 </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Page numbers are the PDF's own pages. Whatever range you set is
+                  exactly what opens in the viewer.
+                </p>
               </div>
               <div className="p-5 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50/50 rounded-b-lg shrink-0">
                 <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
